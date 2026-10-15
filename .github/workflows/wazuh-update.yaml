@@ -1,0 +1,76 @@
+---
+name: Wazuh version watch
+
+# Looks for a newer stable Wazuh agent in Wazuh's official apt repository every week. If there is
+# one, it opens a pull request that updates the Dockerfile, the app version and the changelog
+# together. The pull request runs the whole CI (tests against a real manager, Trivy), so a
+# release containing the new agent has already passed everything by the time it is merged.
+#
+# Needs: Settings > Actions > General > "Allow GitHub Actions to create and approve pull
+# requests". Pull requests created with the default token do not start other workflows; to have
+# CI run on the bump automatically, create a fine-grained token with "contents" and "pull
+# requests" write access and save it as the secret WAZUH_UPDATE_TOKEN.
+
+"on":
+  schedule:
+    - cron: "30 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    name: Check for a newer Wazuh agent
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Look for a newer agent and apply it
+        id: update
+        run: |
+          result="$(python3 -I scripts/wazuh_update.py apply)"
+          echo "${result}"
+          {
+            echo "changed=$(jq -r '.changed' <<< "${result}")"
+            echo "current=$(jq -r '.current' <<< "${result}")"
+            echo "latest=$(jq -r '.latest' <<< "${result}")"
+            echo "app_version=$(jq -r '.new_app_version // ""' <<< "${result}")"
+            echo "minor_change=$(jq -r '.minor_change // false' <<< "${result}")"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Open a pull request
+        if: steps.update.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1  # v8.1.1
+        with:
+          token: ${{ secrets.WAZUH_UPDATE_TOKEN || secrets.GITHUB_TOKEN }}
+          branch: wazuh-update/${{ steps.update.outputs.latest }}
+          delete-branch: true
+          commit-message: "Update the Wazuh agent to ${{ steps.update.outputs.latest }}"
+          title: "Update the Wazuh agent to ${{ steps.update.outputs.latest }}"
+          body: |
+            Wazuh published agent **${{ steps.update.outputs.latest }}** (this app has
+            ${{ steps.update.outputs.current }}). This pull request updates, together:
+
+            - `wazuh_agent/Dockerfile`: the pinned agent version
+            - `wazuh_agent/config.yaml`: the app version, now `${{ steps.update.outputs.app_version }}`
+            - `wazuh_agent/CHANGELOG.md`: a new unreleased entry
+
+            CI runs the render tests, the end-to-end tests against a real Wazuh manager (amd64 and
+            arm64) and the Trivy scans. Merging does not publish anything: publish by creating a
+            release once the changelog date is filled in.
+
+            ### Before releasing
+
+            - [ ] **Check the Wazuh manager.** The manager must be the same version as the agent or
+                  newer. This update is a ${{ steps.update.outputs.minor_change == 'true' && '**minor** version change, so upgrade the manager first' || 'patch release, which managers one patch behind accept' }}.
+            - [ ] Read the [Wazuh release notes](https://documentation.wazuh.com/current/release-notes/index.html)
+                  for agent-side changes.
+            - [ ] Replace `unreleased` in the changelog heading with today's date.
