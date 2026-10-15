@@ -1,0 +1,3 @@
+{"hostname": "homeassistant", "operating_system": "Home Assistant OS 16.2", "hassos": "16.2",
+ "homeassistant": "2026.10.1", "supervisor": "2026.10.0", "machine": "rpi4-64", "arch": "aarch64",
+ "channel": "stable", "app_version": "1.0.0", "journal_available": true}

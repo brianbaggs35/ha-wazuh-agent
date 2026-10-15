@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Renders the Wazuh agent configuration from the Home Assistant app options.
+#
+#   wazuh-ha-render --options FILE --info FILE --outdir DIR [--skip-ossec]
+#
+# Writes DIR/ossec.conf (unless --skip-ossec) and DIR/local_internal_options.conf.
+# Exit status: 0 ok, 2 the options are invalid (reasons on stderr), 1 anything else.
+#
+# This script has no dependency on Home Assistant or the Supervisor, so the same
+# code path runs in the app and in the test suite.
+set -euo pipefail
+
+LIB="${WAZUH_HA_LIB:-/usr/local/lib/wazuh-ha}"
+
+options=""
+info=""
+outdir=""
+skip_ossec=0
+
+usage() {
+    echo "usage: wazuh-ha-render --options FILE --info FILE --outdir DIR [--skip-ossec]" >&2
+    exit 1
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --options) options="${2:-}"; shift 2 ;;
+        --info) info="${2:-}"; shift 2 ;;
+        --outdir) outdir="${2:-}"; shift 2 ;;
+        --skip-ossec) skip_ossec=1; shift ;;
+        *) usage ;;
+    esac
+done
+
+[[ -n "${options}" && -n "${info}" && -n "${outdir}" ]] || usage
+[[ -r "${options}" ]] || { echo "cannot read options file: ${options}" >&2; exit 1; }
+[[ -r "${info}" ]] || { echo "cannot read info file: ${info}" >&2; exit 1; }
+
+jq -e 'type == "object"' "${options}" > /dev/null \
+    || { echo "options file is not a JSON object: ${options}" >&2; exit 1; }
+jq -e 'type == "object"' "${info}" > /dev/null \
+    || { echo "info file is not a JSON object: ${info}" >&2; exit 1; }
+
+# 1. Validate. Every problem is reported at once so the user can fix them in one go.
+errors="$(jq -n -r --slurpfile o "${options}" --slurpfile i "${info}" -f "${LIB}/validate.jq")"
+if [[ -n "${errors}" ]]; then
+    echo "The app configuration is not valid:" >&2
+    while IFS= read -r line; do
+        echo "  - ${line}" >&2
+    done <<< "${errors}"
+    exit 2
+fi
+
+# 2. Build the template context. It never contains the enrollment password.
+workdir="$(mktemp -d)"
+trap 'rm -rf "${workdir}"' EXIT
+jq -n --slurpfile o "${options}" --slurpfile i "${info}" -f "${LIB}/ctx.jq" > "${workdir}/ctx.json"
+
+# 3. Render.
+mkdir -p "${outdir}"
+if [[ "${skip_ossec}" -eq 0 ]]; then
+    tempio -conf "${workdir}/ctx.json" -template "${LIB}/ossec.conf.gtpl" -out "${outdir}/ossec.conf"
+fi
+tempio -conf "${workdir}/ctx.json" -template "${LIB}/local_internal_options.conf.gtpl" \
+    -out "${outdir}/local_internal_options.conf"

@@ -1,0 +1,281 @@
+---
+name: Wazuh Agent
+version: "1.0.0"
+slug: wazuh_agent
+image: ghcr.io/brianbaggs35/wazuh_agent
+description: >-
+  Enroll Home Assistant OS in your existing Wazuh manager as a monitored
+  endpoint: host and Home Assistant logs, file integrity, inventory and
+  rootkit checks.
+url: https://github.com/brianbaggs35/ha-wazuh-agent
+arch:
+  - aarch64
+  - amd64
+# Experimental until it has been verified on real Home Assistant OS hardware.
+stage: experimental
+init: false
+startup: application
+boot: auto
+# Stopping flushes the agent's databases; give it time.
+timeout: 30
+# The agent's databases must not be copied while they are being written.
+backup: cold
+
+# --- Privileges -------------------------------------------------------------
+# Deliberately minimal, to keep the Supervisor security rating at its maximum:
+# no host network, no published ports, no extra capabilities, no full access,
+# no host PID namespace, no Docker API, protection mode stays on. The agent only
+# makes outbound connections to the Wazuh manager.
+#
+# Supervisor info calls only (hostname, versions) for the agent name and labels.
+hassio_api: true
+hassio_role: default
+# The host journal, read-only: SSH logins, kernel messages and the logs of Home
+# Assistant Core, the Supervisor and every app all land there.
+journald: true
+map:
+  # Home Assistant's own configuration (/homeassistant), for file integrity.
+  - type: homeassistant_config
+    read_only: true
+  # Certificates and keys (/ssl), for file integrity.
+  - type: ssl
+    read_only: true
+  # This app's configuration folder (/config): CA certificates, extra Wazuh
+  # configuration, custom policies. Edit it from the file editor or Samba.
+  - type: app_config
+    read_only: true
+
+# --- Options ----------------------------------------------------------------
+options:
+  # Connection
+  manager_address: ""
+  manager_port: 1514
+  manager_protocol: tcp
+  manager_failover_addresses: []
+  server_max_retries: 5
+  server_retry_interval: 10
+  notify_time: 20
+  time_reconnect: 60
+  crypto_method: aes
+  auto_restart: true
+  config_profile: homeassistant
+  buffer_enabled: true
+  buffer_queue_size: 5000
+  buffer_events_per_second: 500
+
+  # Enrollment
+  enrollment_enabled: true
+  enrollment_port: 1515
+  enrollment_delay: 20
+  enrollment_use_source_ip: false
+  force_reenroll: false
+  agent_groups: []
+
+  # Identity
+  auto_labels: true
+  agent_labels: []
+
+  # Log collection
+  journal_enabled: true
+  journal_auth: true
+  journal_kernel: true
+  journal_homeassistant: true
+  journal_supervisor: true
+  journal_errors: true
+  journal_apps: false
+  journal_all: false
+  journal_filters: []
+  ha_core_log_enabled: false
+  log_files: []
+  log_commands: []
+
+  # File integrity monitoring
+  fim_enabled: true
+  fim_frequency: 43200
+  fim_scan_on_start: true
+  fim_directories:
+    - path: /homeassistant
+      realtime: true
+      report_changes: false
+    - path: /ssl
+      realtime: true
+      report_changes: false
+  fim_ignore: []
+  fim_ignore_sregex:
+    - .log$
+    - .log.1$
+    - .db$
+    - .db-wal$
+    - .db-shm$
+    - /.storage/core.restore_state
+    - /.storage/trace.saved_traces
+    - /deps/
+    - /tts/
+    - /__pycache__/
+    - .pyc$
+  fim_nodiff:
+    - /homeassistant/secrets.yaml
+  fim_nodiff_sregex:
+    - ^/homeassistant/.storage/
+    - ^/ssl/
+  fim_max_eps: 50
+  fim_process_priority: 10
+  fim_file_limit: 100000
+  fim_sync_enabled: true
+  fim_sync_interval: 5m
+  fim_sync_max_eps: 10
+
+  # Rootkit and policy checks
+  rootcheck_enabled: true
+  rootcheck_frequency: 43200
+  rootcheck_check_files: true
+  rootcheck_check_trojans: true
+  rootcheck_check_dev: true
+  rootcheck_check_sys: true
+  rootcheck_check_pids: false
+  rootcheck_check_ports: false
+  rootcheck_check_if: true
+  sca_enabled: false
+  sca_scan_on_start: true
+  sca_interval: 12h
+  sca_skip_nfs: true
+  sca_policies: []
+
+  # System inventory
+  inventory_enabled: true
+  inventory_interval: 1h
+  inventory_scan_on_start: true
+  inventory_hardware: true
+  inventory_os: true
+  inventory_network: true
+  inventory_packages: false
+  inventory_ports: false
+  inventory_processes: false
+
+  # Response and advanced
+  active_response_enabled: false
+  allow_remote_commands: false
+  debug_level: 0
+  log_max_size_mb: 10
+  use_custom_ossec_conf: false
+
+schema:
+  manager_address: str
+  manager_port: port
+  manager_protocol: list(tcp|udp)
+  manager_failover_addresses:
+    - str
+  server_max_retries: int(1,1000000)
+  server_retry_interval: int(1,86400)
+  notify_time: int(1,86400)
+  time_reconnect: int(1,86400)
+  crypto_method: list(aes|blowfish)
+  auto_restart: bool
+  config_profile: str?
+  buffer_enabled: bool
+  buffer_queue_size: int(1,100000)
+  buffer_events_per_second: int(1,1000)
+
+  enrollment_enabled: bool
+  enrollment_address: str?
+  enrollment_port: port
+  enrollment_password: password?
+  enrollment_ca_path: str?
+  enrollment_certificate_path: str?
+  enrollment_key_path: str?
+  enrollment_delay: int(0,3600)
+  enrollment_use_source_ip: bool
+  force_reenroll: bool
+  agent_name: str?
+  agent_groups:
+    - str
+
+  auto_labels: bool
+  agent_labels:
+    - key: str
+      value: str
+
+  journal_enabled: bool
+  journal_auth: bool
+  journal_kernel: bool
+  journal_homeassistant: bool
+  journal_supervisor: bool
+  journal_errors: bool
+  journal_apps: bool
+  journal_all: bool
+  journal_filters:
+    - field: str
+      pattern: str
+      ignore_if_missing: bool?
+  ha_core_log_enabled: bool
+  log_files:
+    - path: str
+      format: list(syslog|json|apache|audit|multi-line|multi-line-regex|generic|mysql_log|postgresql_log|squid|snort-fast|snort-full|nmapg|djb-multilog)?
+      only_future_events: bool?
+      ignore: str?
+      restrict: str?
+      exclude: str?
+      age: str?
+  log_commands:
+    - command: str
+      format: list(command|full_command)?
+      frequency: int(1,86400)?
+      alias: str?
+
+  fim_enabled: bool
+  fim_frequency: int(1,31536000)
+  fim_scan_on_start: bool
+  fim_directories:
+    - path: str
+      realtime: bool?
+      report_changes: bool?
+      check_all: bool?
+      restrict: str?
+      tags: str?
+      recursion_level: int(0,320)?
+  fim_ignore:
+    - str
+  fim_ignore_sregex:
+    - str
+  fim_nodiff:
+    - str
+  fim_nodiff_sregex:
+    - str
+  fim_max_eps: int(0,1000000)
+  fim_process_priority: int(-20,19)
+  fim_file_limit: int(1,2147483647)
+  fim_sync_enabled: bool
+  fim_sync_interval: match(^[0-9]+[smhd]$)
+  fim_sync_max_eps: int(0,1000000)
+
+  rootcheck_enabled: bool
+  rootcheck_frequency: int(1,31536000)
+  rootcheck_check_files: bool
+  rootcheck_check_trojans: bool
+  rootcheck_check_dev: bool
+  rootcheck_check_sys: bool
+  rootcheck_check_pids: bool
+  rootcheck_check_ports: bool
+  rootcheck_check_if: bool
+  sca_enabled: bool
+  sca_scan_on_start: bool
+  sca_interval: match(^[0-9]+[smhdwM]$)
+  sca_skip_nfs: bool
+  sca_policies:
+    - str
+
+  inventory_enabled: bool
+  inventory_interval: match(^[0-9]+[smhdwM]$)
+  inventory_scan_on_start: bool
+  inventory_hardware: bool
+  inventory_os: bool
+  inventory_network: bool
+  inventory_packages: bool
+  inventory_ports: bool
+  inventory_processes: bool
+
+  active_response_enabled: bool
+  allow_remote_commands: bool
+  debug_level: int(0,2)
+  log_max_size_mb: int(1,512)
+  use_custom_ossec_conf: bool
