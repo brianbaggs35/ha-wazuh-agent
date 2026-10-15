@@ -1,5 +1,8 @@
 # hadolint configuration (https://github.com/hadolint/hadolint)
 ---
 failure-threshold: warning
+# ghcr.io: the Home Assistant base image. docker.io: the official node and golang builder images
+# (build stages only, pinned by digest).
 trustedRegistries:
   - ghcr.io
+  - docker.io

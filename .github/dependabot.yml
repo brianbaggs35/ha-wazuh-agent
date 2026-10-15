@@ -17,3 +17,21 @@ updates:
     directory: /wazuh_agent
     schedule:
       interval: weekly
+
+  # The status page's Go module (standard library only today, but kept watched).
+  - package-ecosystem: gomod
+    directory: /wazuh_agent/ui/server
+    schedule:
+      interval: weekly
+
+  # The status page's npm dependencies. Updates to the major version of the UI framework are left
+  # to a person: they can change how the page looks and behaves.
+  - package-ecosystem: npm
+    directory: /wazuh_agent/ui/web
+    schedule:
+      interval: weekly
+    groups:
+      web-minor-and-patch:
+        update-types:
+          - minor
+          - patch
