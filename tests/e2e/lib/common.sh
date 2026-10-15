@@ -128,8 +128,9 @@ manager_agent_line() {
 }
 
 manager_agent_active() {
-    local name="$1"
-    manager_agent_line "${name}" | grep -q 'Active'
+    local name="$1" line
+    line="$(manager_agent_line "${name}")"
+    [[ "${line}" == *Active* ]]
     return
 }
 

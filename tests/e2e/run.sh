@@ -193,9 +193,10 @@ EOF'
 
     wait_for 150 "agent active" manager_agent_active "${name}" || { fail "agent active"; dump_agent "${c}"; return; }
     agent_settle "${c}"
-    local id
+    local id group_members
     id="$(manager_agent_id "${name}")"
-    docker exec "${MANAGER}" /var/ossec/bin/agent_groups -l -g e2e-group 2> /dev/null | grep -q "${id}" \
+    group_members="$(docker exec "${MANAGER}" /var/ossec/bin/agent_groups -l -g e2e-group 2> /dev/null)"
+    grep -q "${id}" <<< "${group_members}" \
         && pass "the agent joined the requested group" || fail "the agent joined the requested group"
     docker exec "${c}" grep -q 'e2e_extra' /var/ossec/etc/ossec.conf \
         && pass "ossec_extra.conf was appended to the configuration" || fail "ossec_extra.conf was appended to the configuration"
@@ -396,7 +397,11 @@ scenario_ui() {
     [[ "${assets_ok}" == 1 ]] && pass "every script and stylesheet the page loads is served" || fail "every script and stylesheet the page loads is served"
     [[ "$(ui_code "${c}" /assets/)" == 404 ]] && pass "directories are not listed" || fail "directories are not listed"
     [[ "$(ui_code "${c}" /api/status -X POST)" == 405 ]] && pass "the page is read-only (POST is refused)" || fail "the page is read-only (POST is refused)"
-    ui_get "${c}" /api/status -D - -o /dev/null | grep -qi '^content-security-policy:' \
+    # Capture the headers first: "curl | grep -q" fails when grep exits on the first match while curl
+    # is still writing the other headers ("write /dev/stdout: broken pipe", and pipefail passes it on).
+    local response_headers
+    response_headers="$(ui_get "${c}" /api/status -D - -o /dev/null)"
+    grep -qi '^content-security-policy:' <<< "${response_headers}" \
         && pass "responses carry a content security policy" || fail "responses carry a content security policy"
 
     # It runs without privileges.
