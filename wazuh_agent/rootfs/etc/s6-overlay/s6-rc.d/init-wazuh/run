@@ -85,6 +85,25 @@ fix_ownership() {
     fi
 }
 
+# Wazuh opens the journal with SD_JOURNAL_LOCAL_ONLY, which only reads journal
+# files written by *this machine*, judged by /etc/machine-id. Inside an app
+# container that file is missing (or differs from the host's), so the host's
+# journal would be silently ignored and nothing would be collected. The journal
+# is mounted as /var/log/journal/<machine-id>/..., so adopt that ID.
+adopt_host_machine_id() {
+    local journal_file id
+    journal_file="$(find /var/log/journal /run/log/journal -mindepth 2 -maxdepth 2 -name '*.journal' \
+        -print -quit 2> /dev/null || true)"
+    [[ -n "${journal_file}" ]] || return 0
+    id="$(basename "$(dirname "${journal_file}")")"
+    if [[ "${id}" =~ ^[0-9a-f]{32}$ ]]; then
+        printf '%s\n' "${id}" > /etc/machine-id
+        bashio::log.info "Host journal found; using its machine ID so Wazuh will read it."
+    else
+        bashio::log.warning "Host journal directory name '${id}' is not a machine ID; journal collection may not work."
+    fi
+}
+
 # Facts the templates need that only exist at runtime.
 write_runtime_info() {
     local supervisor_info='{}' app_info='{}' journal=false
@@ -119,6 +138,7 @@ main() {
         : > "${LIVE}/etc/client.keys"
     fi
 
+    adopt_host_machine_id
     write_runtime_info
 
     local render_args=(--options "${OPTIONS}" --info "${RUNTIME}/info.json" --outdir "${RUNTIME}/rendered")
@@ -197,7 +217,7 @@ main() {
         done < <(grep -E ' (WARNING|ERROR):' <<< "${output}" || true)
     done
 
-    bashio::log.info "Wazuh agent $(sed -n 's/^WAZUH_VERSION="\(.*\)"$/\1/p' "${LIVE}/VERSION.json") configured; starting."
+    bashio::log.info "Wazuh agent $(jq -r '.version' "${LIVE}/VERSION.json") configured; starting."
 }
 
 main "$@"

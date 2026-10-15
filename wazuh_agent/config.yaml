@@ -14,8 +14,6 @@ arch:
 # Experimental until it has been verified on real Home Assistant OS hardware.
 stage: experimental
 init: false
-startup: application
-boot: auto
 # Stopping flushes the agent's databases; give it time.
 timeout: 30
 # The agent's databases must not be copied while they are being written.
@@ -27,9 +25,9 @@ backup: cold
 # no host PID namespace, no Docker API, protection mode stays on. The agent only
 # makes outbound connections to the Wazuh manager.
 #
-# Supervisor info calls only (hostname, versions) for the agent name and labels.
+# Supervisor info calls only (hostname, versions) for the agent name and labels. The role is
+# left at its default ("default"): tests/config/check_config.py fails if it is ever raised.
 hassio_api: true
-hassio_role: default
 # The host journal, read-only: SSH logins, kernel messages and the logs of Home
 # Assistant Core, the Supervisor and every app all land there.
 journald: true
@@ -210,6 +208,7 @@ schema:
   ha_core_log_enabled: bool
   log_files:
     - path: str
+      # yamllint disable-line rule:line-length
       format: list(syslog|json|apache|audit|multi-line|multi-line-regex|generic|mysql_log|postgresql_log|squid|snort-fast|snort-full|nmapg|djb-multilog)?
       only_future_events: bool?
       ignore: str?
