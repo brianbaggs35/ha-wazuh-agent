@@ -30,6 +30,8 @@ You need Docker and Python 3 with PyYAML.
 # static checks (no Docker)
 python3 -I tests/config/check_config.py
 python3 -I -m unittest discover -s tests/scripts
+# coverage of the Python code, as the SonarQube scan in CI measures it
+python3 -m pip install coverage && coverage run -m unittest discover -s tests/scripts && coverage report
 
 # build the image once, then:
 docker build -t ha-wazuh-agent:test wazuh_agent
@@ -46,6 +48,7 @@ IMAGE=ha-wazuh-agent:test tests/e2e/run.sh enroll     # a single scenario
 | Setting | Why |
 | --- | --- |
 | **Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests"** | The weekly *Wazuh version watch* opens its pull request with the default token. Without this it fails at that step. |
+| Secret `SONAR_TOKEN` | The SonarQube Cloud scan in CI (project `brianbaggs35_ha-wazuh-agent`, configured in `sonar-project.properties`). Pull requests from forks cannot read it, so the scan is skipped for them. In SonarQube Cloud, **Automatic Analysis must be off** for this project: it conflicts with the CI-based scan. |
 | Secret `WAZUH_UPDATE_TOKEN` (optional) | A fine-grained token with *contents* and *pull requests* write access. Pull requests opened with the default token do not start CI; with this token they do. |
 | **Branch protection on `master`**: require a pull request and the status check **CI passed** | `CI passed` is the single job that is green only when lint, tests and scans all are. |
 | **Code scanning** enabled | The Trivy results are uploaded as SARIF; the upload is skipped quietly if it is off. |

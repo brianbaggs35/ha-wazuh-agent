@@ -10,6 +10,7 @@ name: CI
 #                 integrity, passwords. amd64 against two manager versions, and arm64 natively
 #                 (the Raspberry Pi architecture)
 #   trivy         vulnerability, misconfiguration and secret scans plus an SBOM
+#   sonarqube     SonarQube Cloud analysis (code quality and security) with Python coverage
 # A nightly run catches new CVEs and new Wazuh or base-image releases without a code change.
 
 "on":
@@ -35,6 +36,7 @@ env:
   TRIVY_VERSION: v0.75.0
   TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2
   PYYAML_VERSION: "6.0.3"
+  COVERAGE_VERSION: "7.16.2"
 
 jobs:
   lint:
@@ -327,11 +329,62 @@ jobs:
           path: sbom.cdx.json
           retention-days: 30
 
+  sonarqube:
+    name: SonarQube Cloud scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # A pull request from a fork cannot read repository secrets (SONAR_TOKEN), so the scan would fail
+    # for every outside contribution instead of being skipped. It is also skipped under `act`.
+    if: >-
+      github.actor != 'nektos/act' &&
+      (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # Full history: Sonar uses it for blame data and for working out what is new code.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Python coverage report
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/venv"
+          "${RUNNER_TEMP}/venv/bin/pip" install --quiet "coverage==${COVERAGE_VERSION}"
+          "${RUNNER_TEMP}/venv/bin/coverage" run -m unittest discover -s tests/scripts
+          "${RUNNER_TEMP}/venv/bin/coverage" xml -o coverage.xml
+
+      - name: Project version
+        id: version
+        run: |
+          echo "value=$(sed -n 's/^version: "\(.*\)"$/\1/p' wazuh_agent/config.yaml)" >> "${GITHUB_OUTPUT}"
+
+      - name: Cache SonarQube packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      # Waits for the quality gate, so this job (and "CI passed") fails when the gate does. Remove
+      # the two quality gate arguments to make the scan report-only.
+      - name: SonarQube Cloud scan
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9  # v8.3.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.projectVersion=${{ steps.version.outputs.value }}
+            -Dsonar.qualitygate.wait=true
+            -Dsonar.qualitygate.timeout=300
+
   # One required status for branch protection: green only if everything above is.
   ci-ok:
     name: CI passed
     if: always()
-    needs: [lint, build, render-tests, e2e, e2e-arm64, trivy]
+    needs: [lint, build, render-tests, e2e, e2e-arm64, trivy, sonarqube]
     runs-on: ubuntu-latest
     steps:
       - name: Check results
@@ -339,7 +392,8 @@ jobs:
           RESULTS: ${{ toJSON(needs.*.result) }}
         run: |
           echo "${RESULTS}"
-          if echo "${RESULTS}" | grep -Eq 'failure|cancelled|skipped'; then
+          # "skipped" is not a failure: the Sonar scan is skipped for pull requests from forks.
+          if echo "${RESULTS}" | grep -Eq 'failure|cancelled'; then
             echo "::error::One or more jobs did not succeed."
             exit 1
           fi
