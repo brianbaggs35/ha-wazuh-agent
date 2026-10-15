@@ -1,4 +1,4 @@
-# Renders local_internal_options.conf from the template context built by ctx.jq.
+# Renders local_internal_options.conf from the render context built by ctx.jq.
 #
 #   jq -r -f local_internal_options.jq context.json > local_internal_options.conf
 

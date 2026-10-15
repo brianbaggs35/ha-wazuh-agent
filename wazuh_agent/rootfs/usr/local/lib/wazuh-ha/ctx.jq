@@ -1,4 +1,4 @@
-# Builds the template context from the app options and runtime info.
+# Builds the render context from the app options and runtime info.
 #
 # Run as:  jq -n --slurpfile o options.json --slurpfile i info.json -f ctx.jq
 #

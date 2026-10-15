@@ -6,8 +6,9 @@ A [Home Assistant](https://www.home-assistant.io) app (formerly "add-on") that r
 [Wazuh](https://wazuh.com) agent on Home Assistant OS and **enrolls it in your existing Wazuh
 manager**, so the device is monitored next to your other endpoints.
 
-> **Status: experimental.** Tested end to end in CI against real Wazuh managers on amd64 and
-> arm64. Not yet verified on real Home Assistant OS hardware.
+> **Status: experimental.** The test suite runs the app against real Wazuh managers (enrollment,
+> persistence, journal, file integrity, passwords) and CI runs it on amd64 and natively on arm64.
+> It has not yet been verified on real Home Assistant OS hardware.
 
 [![Add this repository to your Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fbrianbaggs35%2Fha-wazuh-agent)
 

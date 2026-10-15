@@ -1,4 +1,4 @@
-# Renders ossec.conf from the template context built by ctx.jq.
+# Renders ossec.conf from the render context built by ctx.jq.
 #
 #   jq -r -f ossec.conf.jq context.json > ossec.conf
 #
@@ -6,7 +6,7 @@
 # decode XML entities (&lt; stays "&lt;"), so nothing here is escaped: validate.jq
 # has already refused the few characters that cannot be represented.
 #
-# Written in jq, not as a text template, so the image needs no templating binary:
+# Written in jq rather than with a templating tool, so the image needs no extra binary:
 # the only tool involved is jq, which the validator and the context builder use too.
 
 def present: . != null and . != "";

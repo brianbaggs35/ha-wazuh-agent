@@ -41,6 +41,16 @@ IMAGE=ha-wazuh-agent:test tests/e2e/run.sh enroll     # a single scenario
 `MANAGER_VERSION=4.14.8` runs the end-to-end tests against a different manager version.
 `E2E_KEEP=1` leaves the containers behind for debugging.
 
+## Repository settings the workflows rely on
+
+| Setting | Why |
+| --- | --- |
+| **Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests"** | The weekly *Wazuh version watch* opens its pull request with the default token. Without this it fails at that step. |
+| Secret `WAZUH_UPDATE_TOKEN` (optional) | A fine-grained token with *contents* and *pull requests* write access. Pull requests opened with the default token do not start CI; with this token they do. |
+| **Branch protection on `master`**: require a pull request and the status check **CI passed** | `CI passed` is the single job that is green only when lint, tests and scans all are. |
+| **Code scanning** enabled | The Trivy results are uploaded as SARIF; the upload is skipped quietly if it is off. |
+| Package visibility of `ghcr.io/<owner>/wazuh_agent` set to **public** (after the first release) | Home Assistant pulls the image anonymously. |
+
 ## Rules this project keeps
 
 - **The security rating stays at 8.** `tests/config/check_config.py` recomputes the Supervisor's
