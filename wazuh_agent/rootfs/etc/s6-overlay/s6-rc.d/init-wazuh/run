@@ -15,6 +15,7 @@ readonly LIVE="/data/ossec"       # the agent's real home; /var/ossec points her
 readonly OPTIONS="${OPTIONS_FILE:-/data/options.json}"
 readonly CONFIG_DIR="${APP_CONFIG_DIR:-/config}"
 readonly RUNTIME="/run/wazuh-ha"
+readonly PUBLIC="${RUNTIME}/public"
 
 # What belongs to this installation and must survive an app update.
 readonly KEEP_TOP_LEVEL=(etc queue logs var tmp .ssh VERSION.json)
@@ -85,6 +86,16 @@ fix_ownership() {
     fi
 }
 
+# What the previous run left behind about its processes means nothing in a new container, and
+# wazuh-control trusts it: a start lock held by a killed run names a process ID that this
+# container may well use for something else (so every start fails with "Another instance is
+# locking this process"), and an old daemon PID file can make it think a daemon is running. The
+# data is never shared by two running instances, so nothing here can belong to a live process.
+clear_stale_runtime_state() {
+    rm -rf "${LIVE}/var/start-script-lock"
+    find "${LIVE}/var/run" -maxdepth 1 \( -name '*.pid' -o -name 'wazuh-agentd.state' \) -delete 2> /dev/null || true
+}
+
 # Wazuh opens the journal with SD_JOURNAL_LOCAL_ONLY, which only reads journal
 # files written by *this machine*, judged by /etc/machine-id. Inside an app
 # container that file is missing (or differs from the host's), so the host's
@@ -128,6 +139,7 @@ main() {
 
     install_agent_files
     fix_ownership
+    clear_stale_runtime_state
 
     # The files the agent reads are generated here, never edited by hand.
     # Re-enrolment: removing the key makes the agent enroll again on this start.
@@ -176,6 +188,14 @@ main() {
     install -o root -g wazuh -m 0660 "${RUNTIME}/rendered/ossec.conf" "${LIVE}/etc/ossec.conf"
     install -o root -g wazuh -m 0640 "${RUNTIME}/rendered/local_internal_options.conf" \
         "${LIVE}/etc/local_internal_options.conf"
+
+    # What the status page reads: a world-readable directory of small, non-secret files. The page
+    # runs as an unprivileged user and never touches the agent's own files.
+    install -d -m 0755 "${PUBLIC}"
+    jq --arg version "$(jq -r '.version' "${LIVE}/VERSION.json")" '.agent.version = $version' \
+        "${RUNTIME}/rendered/summary.json" > "${PUBLIC}/summary.json.tmp"
+    chmod 0644 "${PUBLIC}/summary.json.tmp"
+    mv -f "${PUBLIC}/summary.json.tmp" "${PUBLIC}/summary.json"
     rm -rf "${RUNTIME}/rendered"
 
     # Time zone for the agent's timestamps (the daemons run chrooted in /var/ossec).

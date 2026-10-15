@@ -57,6 +57,41 @@ That is the whole setup. Everything else in this document is optional tuning.
 The container's health status (`docker ps` shows it) turns *healthy* only once the agent
 is connected to the manager.
 
+## The status page
+
+Turn on **Show in sidebar** on the app's page and a **Wazuh Agent** entry appears in the Home
+Assistant sidebar (or use **Open Web UI**). It refreshes every few seconds and has a dark and a
+light theme.
+
+The banner at the top says what state the agent is in:
+
+| Banner | Meaning |
+| --- | --- |
+| **Running and connected** | The agent is connected to the manager and sending events. |
+| **Connecting** | The agent is starting its connection to the manager. |
+| **Cannot reach the manager** | The agent runs but is not connected: check the address, ports 1514 and 1515, and the manager's log. |
+| **Running with a problem** | Connected, but one of the agent's services has stopped; the app restarts the agent if it does not come back. |
+| **Agent stopped** | The agent is not running. The app restarts it; if this persists, read the log. |
+| **Starting** / **Status is not updating** | The app has only just started, or its supervisor has stopped reporting. |
+
+Below it, cards show:
+
+| Card | What it tells you |
+| --- | --- |
+| **Registration** | The name and agent ID the manager knows this device by, its groups, config profile and how it enrolled. The agent's key is never shown. |
+| **Connection** | Manager address, last keep-alive and reply, messages sent and waiting, and a **Test the connection** button that tries the manager's ports from the app. |
+| **Agent services** | Each Wazuh service (connection, log collection, file integrity, inventory, ...) and whether it runs. |
+| **What is monitored** | Which sources are switched on: journal, file integrity, inventory, rootkit checks, configuration assessment, and whether active response and remote commands are allowed. |
+| **Updates** | Whether Wazuh has published a newer agent than the one in this app, and whether a newer version of the app exists. Updating the agent means updating the app (see *Updating*). |
+| **This device** | The Home Assistant versions and machine the labels describe. |
+| **Agent log** | The tail of the agent's log, with a copy button. |
+
+The page is read-only: it cannot start, stop or change anything. It is served by an
+unprivileged account and answers only the Supervisor's ingress gateway, so it is not reachable
+from the network and the app opens no port. Its update lookup is the only thing that goes
+beyond the manager: one HTTPS request to `packages.wazuh.com` (Wazuh's package index) at most
+every few hours. Set `ui_update_check` to off to stop it; the page then says it is disabled.
+
 ## What is monitored
 
 | Source | What you get | On by default |
@@ -218,9 +253,36 @@ The app is built to keep Home Assistant's **security rating at its maximum**:
   (`/ssl`) and its own configuration folder, and to the host journal.
 - **Supervisor API: info calls only** (hostname and versions, used for the agent name and
   labels).
+- **A status page that cannot change anything**: unprivileged, read-only, reachable only through
+  Home Assistant's ingress gateway, and it never serves the agent's key.
 - A **custom AppArmor profile**, and a **digest-pinned Debian base image**. The Wazuh agent
   is installed from Wazuh's official apt repository, and the build fails if the repository's
   signing key ever differs from the pinned fingerprint.
+
+### Permissions, and how they were checked
+
+Wazuh's documentation lists what an agent needs from the **network** (outbound 1514/tcp, or
+UDP if chosen, to send events; outbound 1515/tcp to enroll) and nothing about Linux
+capabilities. So the app does not guess: the test suite runs the agent against a real manager
+with the capabilities cut down and checks that it still enrolls, connects, runs all five
+daemons and reports healthy.
+
+| Run | Result |
+| --- | --- |
+| Docker's default capabilities (what an app gets when it asks for none) | Works. |
+| The default set minus `NET_RAW`, `AUDIT_WRITE`, `MKNOD`, `SETFCAP` (what current Supervisors remove) | Works. |
+| Only `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETGID`, `SETUID`, `KILL` | Works. |
+| No capabilities at all | Does not run. |
+
+Taking the defaults away one at a time showed that each of those six is needed (fixing file
+ownership and modes, switching to the agent's own account, and signalling its daemons) and
+that the other eight are not. The agent needs **no capability beyond what every app already
+has**, which is why the app requests none and keeps the maximum security rating. Enrollment
+needs nothing from Home Assistant either: the device registers itself with the manager the
+way any Linux host does.
+
+What the agent can then read is decided by the folders Home Assistant maps into the app
+(configuration and certificates, read-only) and the host journal, as described above.
 
 ### What your Wazuh manager can do
 

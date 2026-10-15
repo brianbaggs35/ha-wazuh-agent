@@ -1,0 +1,19 @@
+#!/usr/bin/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# The read-only status page, shown as the "Wazuh Agent" panel through Home Assistant ingress.
+#
+# It runs as an unprivileged account and reads only the world-readable files the agent service
+# publishes in /run/wazuh-ha/public: it never touches the agent's own files or its key. It only
+# answers the Supervisor's ingress gateway (172.30.32.2).
+# ==============================================================================
+set -euo pipefail
+
+readonly OPTIONS="${OPTIONS_FILE:-/data/options.json}"
+
+# Not `.ui_update_check // true`: jq's // also replaces false, so "off" would never take effect.
+WAZUH_UI_UPDATE_CHECK="$(jq -r 'if .ui_update_check == false then "false" else "true" end' "${OPTIONS}")"
+export WAZUH_UI_UPDATE_CHECK
+
+bashio::log.info "Starting the status page on port 8099."
+exec s6-setuidgid wazuhui /usr/local/bin/wazuh-ha-ui

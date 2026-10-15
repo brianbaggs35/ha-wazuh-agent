@@ -7,6 +7,29 @@
 #
 # Pinned by digest (multi-arch index: linux/amd64 + linux/arm64). Dependabot
 # keeps the digest current; do not replace it with a floating tag.
+
+# ---------------------------------------------------------------------------------------------
+# Build stages for the status page. Nothing from them reaches the final image except one static
+# binary and the built web files: no Node, no Go toolchain, no packages to patch at runtime.
+# Both builder images are pinned by digest; Dependabot keeps them current.
+# ---------------------------------------------------------------------------------------------
+FROM node:24-trixie-slim@sha256:7f486cabe892bff8fef04c0f7da8dba84a560be3e4e2740b7a86afc57ebec315 AS ui-web
+WORKDIR /web
+COPY ui/web/package.json ui/web/package-lock.json ./
+# --ignore-scripts: no dependency may run code during installation.
+RUN npm ci --ignore-scripts --no-audit --no-fund
+COPY ui/web ./
+RUN npm run build
+
+FROM golang:1.27.2-trixie@sha256:47667934874913a449b96faa7ef4777fa285d9ec29126ee80ed61c45b7cccf0e AS ui-server
+WORKDIR /src
+COPY ui/server ./
+# Standard library only (no third-party modules); static, stripped, reproducible.
+RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w" -o /out/wazuh-ha-ui .
+
+# ---------------------------------------------------------------------------------------------
+# The app image.
+# ---------------------------------------------------------------------------------------------
 FROM ghcr.io/home-assistant/base-debian:trixie@sha256:a7f262f331e2a4f4e3e02173da932a8d8c26f3d5758a5f59903d46de1f728e5b
 
 # The agent version. Wazuh requires the MANAGER to be the same version or
@@ -37,6 +60,9 @@ RUN set -eux; \
     groupadd --system --gid 1450 wazuh; \
     useradd --system --uid 1450 --gid wazuh --home-dir /var/ossec \
         --shell /sbin/nologin --no-create-home wazuh; \
+    # The status page runs as its own unprivileged account, with no access to the agent's files.
+    groupadd --system --gid 1451 wazuhui; \
+    useradd --system --uid 1451 --gid wazuhui --no-create-home --shell /sbin/nologin wazuhui; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl gnupg; \
     # HTTPS only, even across redirects.
@@ -67,13 +93,17 @@ RUN set -eux; \
     rm -f /usr/bin/tempio
 
 COPY rootfs /
+COPY --from=ui-server /out/wazuh-ha-ui /usr/local/bin/wazuh-ha-ui
+COPY --from=ui-web /web/dist /usr/share/wazuh-ha-ui
 
 RUN chmod 0755 \
     /usr/local/bin/wazuh-ha-render \
     /usr/local/bin/wazuh-ha-healthcheck \
+    /usr/local/bin/wazuh-ha-ui \
     /etc/s6-overlay/s6-rc.d/init-wazuh/run \
     /etc/s6-overlay/s6-rc.d/wazuh-agent/run \
-    /etc/s6-overlay/s6-rc.d/wazuh-agent/finish
+    /etc/s6-overlay/s6-rc.d/wazuh-agent/finish \
+    /etc/s6-overlay/s6-rc.d/wazuh-ui/run
 
 # s6: give the agent time to stop its daemons cleanly (they flush their
 # databases on SIGTERM); the Supervisor's own stop timeout is set to match.

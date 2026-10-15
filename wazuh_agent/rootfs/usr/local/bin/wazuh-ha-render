@@ -3,7 +3,8 @@
 #
 #   wazuh-ha-render --options FILE --info FILE --outdir DIR [--skip-ossec]
 #
-# Writes DIR/ossec.conf (unless --skip-ossec) and DIR/local_internal_options.conf.
+# Writes DIR/ossec.conf (unless --skip-ossec), DIR/local_internal_options.conf and DIR/summary.json
+# (the non-secret description of the agent that the status page shows).
 # Exit status: 0 ok, 2 the options are invalid (reasons on stderr), 1 anything else.
 #
 # This script has no dependency on Home Assistant or the Supervisor, so the same
@@ -62,3 +63,4 @@ if [[ "${skip_ossec}" -eq 0 ]]; then
     jq -r -f "${LIB}/ossec.conf.jq" "${workdir}/ctx.json" > "${outdir}/ossec.conf"
 fi
 jq -r -f "${LIB}/local_internal_options.jq" "${workdir}/ctx.json" > "${outdir}/local_internal_options.conf"
+jq -n --slurpfile c "${workdir}/ctx.json" --slurpfile i "${info}" -f "${LIB}/summary.jq" > "${outdir}/summary.json"

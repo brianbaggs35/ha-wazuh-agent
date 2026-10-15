@@ -24,6 +24,9 @@ Wazuh agent **4.14.9**.
   managers, UDP or TCP, and a fixed agent name (default: the Home Assistant host name).
 - The agent keeps its identity (key, counters and databases) in the app's persistent
   storage, so restarts and app updates do not register a new agent.
+- An unclean stop (power cut, forced stop) cannot block the next start: the process lock and
+  PID files a killed run leaves in the persistent storage are cleared at start. Without this,
+  Wazuh's start script can mistake the stale lock for a live one and refuse to start the agent.
 - Host journal collection with sensible presets (logins, kernel warnings, Home Assistant
   Core, Supervisor, errors, optionally all apps) plus custom journal filters. The app
   adopts the host journal's machine ID, without which Wazuh silently ignores it.
@@ -43,8 +46,19 @@ Wazuh agent **4.14.9**.
   Docker API), a custom AppArmor profile and a digest-pinned Debian base image, for the
   maximum Home Assistant security rating.
 - Container health reports whether the agent is connected to the manager.
+- The permissions the agent needs were measured, not assumed (Wazuh documents ports, not
+  capabilities): an end-to-end test runs it with only `CHOWN`, `DAC_OVERRIDE`, `FOWNER`,
+  `SETGID`, `SETUID` and `KILL`, with the reduced set a current Supervisor leaves a container,
+  and with none, and checks that it enrolls and runs fully in the first two and not in the last.
+- A read-only **Wazuh Agent** status page, shown as a sidebar panel through Home Assistant ingress:
+  running, degraded or stopped; connected or not; the registration (agent ID and name, never the key);
+  what is monitored; which services run; whether a newer Wazuh agent or app version exists; a
+  connection test against the manager's ports; and the agent's log. It runs as an unprivileged
+  account, answers only the Supervisor's ingress gateway, and needs no published port. The option
+  `ui_update_check` turns the update lookup off.
 - Continuous integration: lint, render and end-to-end tests against a real Wazuh manager,
-  Trivy scans, and a release pipeline that publishes only after the tests and scans pass.
+  100% coverage of the Python, Go and web code, SonarQube Cloud and Trivy scans, and a release
+  pipeline that publishes only after the tests and scans pass.
 
 ### Known limitations
 

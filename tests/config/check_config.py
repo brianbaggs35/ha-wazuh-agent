@@ -184,6 +184,14 @@ def check_security(config: dict) -> None:
         err("hassio_role must stay 'default': the app only reads Supervisor info")
     if config.get("apparmor") is False:
         err("apparmor must not be disabled")
+    # The status page: an ingress panel named "Wazuh Agent". Ingress is the one thing that must be
+    # on; a published port would cost the rating, and is forbidden above.
+    if config.get("ingress") is not True:
+        err("ingress must be on: it is how the Wazuh Agent panel is shown")
+    if config.get("panel_title") != "Wazuh Agent":
+        err("panel_title must be 'Wazuh Agent' (the name of the sidebar panel)")
+    if not str(config.get("panel_icon", "")).startswith("mdi:"):
+        err("panel_icon must be an mdi: icon")
     for volume in config.get("map", []):
         if isinstance(volume, dict) and volume.get("type") not in ("data",) and volume.get("read_only") is not True:
             err(f"map {volume.get('type')}: must be mounted read-only")
@@ -211,6 +219,10 @@ def check_versions(config: dict) -> None:
     from_line = re.search(r"^FROM\s+(\S+)", dockerfile, re.MULTILINE)
     if not from_line or not re.search(r"@sha256:[0-9a-f]{64}$", from_line.group(1)):
         err("Dockerfile: the base image must be pinned by digest")
+    for stage in ("ui-web", "ui-server"):
+        builder = re.search(rf"^FROM (\S+) AS {stage}$", dockerfile, re.MULTILINE)
+        if not builder or not re.search(r"@sha256:[0-9a-f]{64}$", builder.group(1)):
+            err(f"Dockerfile: the {stage} builder image must be pinned by digest")
     wazuh = re.search(r"^ARG WAZUH_VERSION=(\S+)", dockerfile, re.MULTILINE)
     if not wazuh or not SEMVER.match(wazuh.group(1)):
         err("Dockerfile: ARG WAZUH_VERSION must be a plain version such as 4.14.9")
@@ -223,7 +235,8 @@ def check_versions(config: dict) -> None:
 
 
 def check_files(config: dict) -> None:
-    for name in ("README.md", "DOCS.md", "CHANGELOG.md", "icon.png", "logo.png", "apparmor.txt", "Dockerfile"):
+    for name in ("README.md", "DOCS.md", "CHANGELOG.md", "icon.png", "logo.png", "apparmor.txt", "Dockerfile",
+                 "ui/server/go.mod", "ui/web/package-lock.json"):
         if not (APP / name).is_file():
             err(f"wazuh_agent/{name} is missing")
     repo = ROOT / "repository.yaml"
