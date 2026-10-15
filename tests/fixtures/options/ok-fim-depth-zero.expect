@@ -1,0 +1,4 @@
+has: recursion_level="0">/homeassistant</directories>
+has: recursion_level="2">/ssl</directories>
+has: check_all="yes">/share</directories>
+no: recursion_level="256"

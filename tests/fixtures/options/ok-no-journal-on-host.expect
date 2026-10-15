@@ -1,0 +1,3 @@
+no: location>journald
+has: <agent_name>My-HA--Pi--</agent_name>
+no: <label

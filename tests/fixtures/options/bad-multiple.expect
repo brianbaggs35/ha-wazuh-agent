@@ -1,0 +1,2 @@
+has: fim_ignore[0]: the character "<" is not supported
+has: log_files[0].ignore: must not end with a single backslash

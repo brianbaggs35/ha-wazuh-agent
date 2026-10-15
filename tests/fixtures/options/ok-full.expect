@@ -1,0 +1,51 @@
+has: <address>wazuh.example.lan</address>
+has: <address>wazuh2.example.lan</address>
+has: <address>10.0.0.9</address>
+has: <protocol>udp</protocol>
+has: <max_retries>7</max_retries>
+has: <config-profile>homeassistant, custom</config-profile>
+has: <auto_restart>no</auto_restart>
+has: <manager_address>enroll.example.lan</manager_address>
+has: <port>1516</port>
+has: <agent_name>ha-living-room</agent_name>
+has: <groups>homeassistant,iot</groups>
+has: <server_ca_path>/config/ca.pem</server_ca_path>
+has: <agent_certificate_path>/config/agent.pem</agent_certificate_path>
+has: <agent_key_path>/config/agent.key</agent_key_path>
+has: <authorization_pass_path>etc/authd.pass</authorization_pass_path>
+has: <use_source_ip>yes</use_source_ip>
+no: s3cret
+has: <label key="site">home</label>
+has: <label key="ha_arch">overridden</label>
+no: <label key="ha_arch">aarch64</label>
+has: <label key="ha_os_version">16.2</label>
+has: <filter field="SYSLOG_IDENTIFIER">^(sshd|sshd-session|dropbear|sudo|su|login|systemd-logind)$</filter>
+no: <filter field="_TRANSPORT">^kernel$</filter>
+has: <filter field="SYSLOG_IDENTIFIER">^addon_</filter>
+has: <filter field="SYSLOG_IDENTIFIER" ignore_if_missing="yes">^addon_core_mosquitto$</filter>
+has: <location>/homeassistant/home-assistant.log</location>
+has: <location>/share/myapp/*.log</location>
+has: <log_format>json</log_format>
+has: <ignore type="PCRE2">debug\d+</ignore>
+has: <restrict type="PCRE2">error|fail</restrict>
+has: <age>7d</age>
+has: <only-future-events>no</only-future-events>
+has: <command>df -P</command>
+has: <alias>disk usage</alias>
+has: <frequency>600</frequency>
+has: <command>uptime</command>
+has: <scan_on_start>no</scan_on_start>
+has: restrict="\.yaml$"
+has: tags="ha-config"
+has: recursion_level="4"
+has: <ignore>/homeassistant/www</ignore>
+has: <ignore type="sregex">\.bak$</ignore>
+has: <process_priority>5</process_priority>
+has: <entries>50000</entries>
+has: <interval>10m</interval>
+has: <check_pids>yes</check_pids>
+has: <check_ports>yes</check_ports>
+has: <policy>ruleset/sca/cis_debian13.yml</policy>
+has: <packages>yes</packages>
+has: <os>no</os>
+has: <disabled>no</disabled>

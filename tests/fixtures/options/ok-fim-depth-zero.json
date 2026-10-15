@@ -1,0 +1,2 @@
+{"manager_address": "wazuh.example.lan",
+ "fim_directories": [{"path": "/homeassistant", "recursion_level": 0}, {"path": "/ssl", "recursion_level": 2}, {"path": "/share"}]}

@@ -1,0 +1,3 @@
+{"manager_address": "wazuh.example.lan", "journal_enabled": false, "fim_enabled": false, "rootcheck_enabled": false,
+ "sca_enabled": false, "inventory_enabled": false, "enrollment_enabled": false, "auto_labels": false,
+ "active_response_enabled": false, "buffer_enabled": false}

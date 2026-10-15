@@ -1,0 +1,25 @@
+# Local tooling and editors
+.vscode/
+.idea/
+.claude/
+.secrets
+*.swp
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Test and scan output
+*.sarif
+trivy-*.json
+sbom*.json
+e2e-results/
+.scratch/
+
+# Frontend (added later)
+node_modules/
+dist/
+coverage/

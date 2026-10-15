@@ -1,0 +1,1 @@
+{"manager_address": "m", "journal_filters": [{"field": "lower_case", "pattern": "x"}], "fim_sync_interval": "5 minutes"}

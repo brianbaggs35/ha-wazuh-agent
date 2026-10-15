@@ -1,0 +1,7 @@
+# Follow `source` lines relative to the script that contains them.
+external-sources=true
+source-path=SCRIPTDIR
+
+# "cond && pass || fail" is used in the tests for readability: pass() always
+# succeeds, so the || branch only runs when the condition itself failed.
+disable=SC2015

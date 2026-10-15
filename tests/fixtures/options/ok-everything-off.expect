@@ -1,0 +1,4 @@
+has: <enabled>no</enabled>
+no: location>journald
+no: <label
+has: <disabled>yes</disabled>
