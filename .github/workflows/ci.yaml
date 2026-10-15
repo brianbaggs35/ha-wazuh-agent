@@ -34,7 +34,7 @@ env:
   # Built and loaded within this run only, never pushed. Not named "test-*": Trivy's SARIF puts
   # the image name in the result path and GitHub classifies results under "test" paths as test code.
   IMAGE: ci-wazuh-agent:${{ github.sha }}
-  TRIVY_VERSION: v0.75.0
+  TRIVY_VERSION: v0.76.0
   TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2
   PYYAML_VERSION: "6.0.3"
   COVERAGE_VERSION: "7.16.2"
