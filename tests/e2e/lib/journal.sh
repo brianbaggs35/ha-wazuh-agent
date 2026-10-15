@@ -58,8 +58,11 @@ _PID=222
 MESSAGE=${message}
 
 EOF
+    return
 }
 
 journal_writer_stop() {
-    docker rm -f "$1" > /dev/null 2>&1 || true
+    local name="$1"
+    docker rm -f "${name}" > /dev/null 2>&1 || true
+    return 0
 }

@@ -52,7 +52,8 @@ jobs:
       - name: YAML
         run: |
           python3 -m venv "${RUNNER_TEMP}/venv"
-          "${RUNNER_TEMP}/venv/bin/pip" install --quiet "yamllint==1.38.0" "pyyaml==${PYYAML_VERSION}"
+          "${RUNNER_TEMP}/venv/bin/pip" install --quiet "yamllint==1.38.0" "pyyaml==${PYYAML_VERSION}" \
+            "coverage==${COVERAGE_VERSION}"
           "${RUNNER_TEMP}/venv/bin/yamllint" -c .yamllint --strict .
 
       - name: Shell scripts
@@ -85,8 +86,11 @@ jobs:
         run: |
           "${RUNNER_TEMP}/venv/bin/python" -I tests/config/check_config.py
 
-      - name: Unit tests (version update script)
-        run: python3 -I -m unittest discover -s tests/scripts -v
+      # .coveragerc sets fail_under = 100 (lines and branches): the report fails below that.
+      - name: Unit tests with 100% coverage (version update script)
+        run: |
+          "${RUNNER_TEMP}/venv/bin/coverage" run -m unittest discover -s tests/scripts -v
+          "${RUNNER_TEMP}/venv/bin/coverage" report
 
       - name: Home Assistant app linter
         uses: frenck/action-app-linter@b9cfd1bc62ba60d2c4fc96317b5f7ada5923f4a7  # v2.21.1
@@ -354,6 +358,7 @@ jobs:
           python3 -m venv "${RUNNER_TEMP}/venv"
           "${RUNNER_TEMP}/venv/bin/pip" install --quiet "coverage==${COVERAGE_VERSION}"
           "${RUNNER_TEMP}/venv/bin/coverage" run -m unittest discover -s tests/scripts
+          "${RUNNER_TEMP}/venv/bin/coverage" report
           "${RUNNER_TEMP}/venv/bin/coverage" xml -o coverage.xml
 
       - name: Project version

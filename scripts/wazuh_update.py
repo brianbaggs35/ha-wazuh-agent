@@ -49,9 +49,12 @@ def parse_packages(text: str) -> list[tuple[tuple[int, int, int], int]]:
     """Return (version, revision) for every wazuh-agent stanza in an apt Packages index."""
     found = []
     for stanza in text.split("\n\n"):
-        fields = dict(
-            line.split(": ", 1) for line in stanza.splitlines() if ": " in line and not line.startswith(" ")
-        )
+        fields = {
+            key: value
+            for key, value in (
+                line.split(": ", 1) for line in stanza.splitlines() if ": " in line and not line.startswith(" ")
+            )
+        }
         if fields.get("Package") != "wazuh-agent":
             continue
         match = VERSION_RE.match(fields.get("Version", ""))
@@ -149,22 +152,22 @@ def current_state() -> dict:
     version, revision = read_dockerfile_version(dockerfile)
     config = (APP / "config.yaml").read_text(encoding="utf-8")
     app = re.search(r'^version: "([^"]*)"$', config, re.MULTILINE)
+    if not app:
+        raise UpdateError('config.yaml: the line version: "..." was not found')
     return {
         "current": fmt(version),
         "current_revision": revision,
-        "app_version": app.group(1) if app else None,
+        "app_version": app.group(1),
     }
 
 
-def load_index(index_file: str | None) -> str:
-    if index_file:
-        return pathlib.Path(index_file).read_text(encoding="utf-8")
+def load_index() -> str:
     return gzip.decompress(fetch(INDEX_URL)).decode("utf-8")
 
 
-def check(args: argparse.Namespace) -> dict:
+def check(index_text: str) -> dict:
     state = current_state()
-    latest_version, latest_revision = newest(parse_packages(load_index(args.index_file)))
+    latest_version, latest_revision = newest(parse_packages(index_text))
     state.update(
         latest=fmt(latest_version),
         latest_revision=latest_revision,
@@ -174,8 +177,8 @@ def check(args: argparse.Namespace) -> dict:
     return state
 
 
-def apply(args: argparse.Namespace) -> dict:
-    state = check(args)
+def apply(index_text: str, verify_key: bool = True) -> dict:
+    state = check(index_text)
     if not state["update_available"]:
         state["changed"] = False
         return state
@@ -185,7 +188,7 @@ def apply(args: argparse.Namespace) -> dict:
     pinned = re.search(r"^ARG WAZUH_GPG_FINGERPRINT=([0-9A-F]{40})$", dockerfile, re.MULTILINE)
     if not pinned:
         raise UpdateError("Dockerfile: ARG WAZUH_GPG_FINGERPRINT not found")
-    if not args.skip_key_check:
+    if verify_key:
         live = key_fingerprint(fetch(KEY_URL))
         if live != pinned.group(1):
             raise UpdateError(
@@ -210,13 +213,14 @@ def apply(args: argparse.Namespace) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Deliberately no option that names a file or skips the key check: the only input is the
+    # repository index fetched over HTTPS, and the only files touched are the three in wazuh_agent/.
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=("check", "apply"))
-    parser.add_argument("--index-file", help="read this apt Packages file instead of the network (tests)")
-    parser.add_argument("--skip-key-check", action="store_true", help="do not compare the signing key (tests)")
     args = parser.parse_args(argv)
     try:
-        result = check(args) if args.command == "check" else apply(args)
+        index_text = load_index()
+        result = check(index_text) if args.command == "check" else apply(index_text)
     except (UpdateError, OSError, subprocess.CalledProcessError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

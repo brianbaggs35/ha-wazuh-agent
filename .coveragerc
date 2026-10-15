@@ -1,11 +1,15 @@
 # Coverage for the Python code in this repository (the maintenance script; the app itself is
-# shell, jq and configuration, which coverage.py cannot measure). The XML report is read by the
-# SonarQube Cloud scan in CI.
+# shell, jq and configuration, which coverage.py cannot measure: those are covered by the render
+# and end-to-end tests instead). The XML report is read by the SonarQube Cloud scan in CI.
 [run]
 # Paths in the report relative to the repository root, which is where the scanner looks.
 relative_files = True
+# Every if/else arm, not only every line.
+branch = True
 include =
     scripts/*
 
 [report]
 show_missing = True
+# CI fails below this. Lowering it is a decision to make in a pull request, with a reason.
+fail_under = 100
