@@ -11,7 +11,19 @@ as a normal app update.
 Before updating the app, check that your Wazuh manager is not older than the agent
 it will receive (see "Updating" in the documentation).
 
+## [1.0.1] - 2026-10-15
+
+Wazuh agent **4.14.9**.
+
+### Changed
+
+- First published release. Version 1.0.0 was tagged but never published: its release stopped
+  at the changelog check, so no image exists for it. Everything listed under 1.0.0 below is part
+  of this release, and nothing else changed.
+
 ## [1.0.0] - 2026-10-15
+
+Never published (see 1.0.1).
 
 Wazuh agent **4.14.9**.
 
