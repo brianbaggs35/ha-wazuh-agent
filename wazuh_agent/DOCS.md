@@ -249,6 +249,9 @@ The app is built to keep Home Assistant's **security rating at its maximum**:
 - **No extra privileges.** No host network, no published ports, no added Linux
   capabilities, no full access, no host PID namespace, no Docker API; protection mode stays
   on. The agent only makes **outbound** connections to your manager and exposes no port.
+- **Security rating 8 of 8**, the maximum. Home Assistant shows 7 on the store page before the
+  app is installed and 8 afterwards: it counts the custom AppArmor profile (below) only once
+  the profile has been loaded on the host, which happens at install.
 - **Read-only access** to the Home Assistant configuration (`/homeassistant`), certificates
   (`/ssl`) and its own configuration folder, and to the host journal.
 - **Supervisor API: info calls only** (hostname and versions, used for the agent name and

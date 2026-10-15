@@ -11,6 +11,19 @@ as a normal app update.
 Before updating the app, check that your Wazuh manager is not older than the agent
 it will receive (see "Updating" in the documentation).
 
+## [1.0.2] - 2026-10-15
+
+Wazuh agent **4.14.9**.
+
+### Changed
+
+- The app is no longer marked experimental in the Home Assistant store.
+- Documentation: a note on what the automated tests cover and what they do not (Home Assistant
+  itself), and on the security rating, which the store shows as 7 until the app is installed
+  and as 8 afterwards.
+- Continuous integration: Trivy updated to 0.76.0, and an end-to-end check that failed now and
+  then because of a closed pipe was made reliable. The app image is otherwise unchanged.
+
 ## [1.0.1] - 2026-10-15
 
 Wazuh agent **4.14.9**.
