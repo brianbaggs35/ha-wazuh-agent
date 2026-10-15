@@ -1,0 +1,62 @@
+#include <tunables/global>
+
+# AppArmor profile for the Wazuh Agent app.
+#
+# Shipping a profile is worth +1 on the Supervisor's security rating. It follows
+# the structure of the Home Assistant default app profile on purpose: the agent
+# has to read the files it monitors, drop privileges between daemons and chroot
+# into its install directory, so the profile stays permissive about file access
+# and capabilities (the container's capability set is already limited by Docker,
+# and this app asks for no extra ones) and restricts the parts that matter:
+#
+#   * signals and ptrace stay inside the app's own processes
+#   * no access to the kernel's memory image or the sysrq trigger
+#
+# The profile name must equal the app slug.
+profile wazuh_agent flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # Capabilities (limited by the container's own set; none are added)
+  capability,
+  file,
+  network,
+
+  # Signals: wazuh-control and s6 stop and reload daemons with signals; Docker
+  # stops the container by signalling the init process.
+  signal (send,receive) peer=wazuh_agent,
+  signal (receive) peer=unconfined,
+  signal (send) set=(kill,term,int,hup,cont,usr1,usr2,quit),
+
+  # Reading /proc/<pid> of the app's own processes (system inventory)
+  ptrace (read,readby,trace,tracedby) peer=wazuh_agent,
+  ptrace (readby) peer=unconfined,
+
+  # S6-Overlay
+  /init ix,
+  /bin/** ix,
+  /usr/bin/** ix,
+  /usr/sbin/** ix,
+  /run/{s6,s6-rc*,service}/** ix,
+  /package/** ix,
+  /command/** ix,
+  /etc/services.d/** rwix,
+  /etc/cont-init.d/** rwix,
+  /etc/cont-finish.d/** rwix,
+  /etc/s6-overlay/** rwix,
+  /run/{,**} rwk,
+  /dev/tty rw,
+
+  # Bashio and the helper scripts
+  /usr/lib/bashio/** ix,
+  /usr/local/bin/wazuh-ha-* ix,
+  /tmp/** rwk,
+
+  # The Wazuh agent: program files and state on the persistent volume
+  # (/var/ossec is a symlink to /data/ossec).
+  /var/ossec/** rwixk,
+  /data/** rwixk,
+
+  # Nothing here has a use for these.
+  deny /proc/sysrq-trigger rwklx,
+  deny /proc/kcore rwklx,
+}

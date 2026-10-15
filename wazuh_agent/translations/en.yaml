@@ -1,0 +1,381 @@
+---
+configuration:
+  # ---- Connection -----------------------------------------------------------
+  manager_address:
+    name: Wazuh manager address
+    description: >-
+      Required. The IP address or host name of your Wazuh manager. The agent
+      connects to it for events (port 1514) and, the first time, to enroll
+      (port 1515).
+  manager_port:
+    name: Manager port
+    description: Port the manager receives agent events on. The Wazuh default is 1514.
+  manager_protocol:
+    name: Manager protocol
+    description: Transport used for events. TCP (default) is reliable; UDP is lighter but can lose events.
+  manager_failover_addresses:
+    name: Failover manager addresses
+    description: >-
+      Extra manager addresses, tried in order if the primary is unreachable
+      (a Wazuh cluster). They use the same port and protocol.
+  server_max_retries:
+    name: Connection retries
+    description: How many times the agent retries a manager before moving on to the next one.
+  server_retry_interval:
+    name: Retry interval (seconds)
+    description: Seconds between connection retries.
+  notify_time:
+    name: Keep-alive interval (seconds)
+    description: How often the agent tells the manager it is alive. Lower values detect a dead agent sooner.
+  time_reconnect:
+    name: Reconnect time (seconds)
+    description: How long the agent waits before reconnecting after losing the manager.
+  crypto_method:
+    name: Encryption method
+    description: Encryption for the agent-manager channel. Keep AES unless an old manager forces otherwise.
+  auto_restart:
+    name: Restart on new configuration
+    description: Restart the agent automatically when the manager pushes new centralized configuration.
+  config_profile:
+    name: Configuration profile
+    description: >-
+      Profile name(s) the manager can target with &lt;agent_config profile="..."&gt; in agent.conf.
+      The default "homeassistant" lets you push settings to all Home Assistant agents.
+  buffer_enabled:
+    name: Event buffer
+    description: Buffer events when the manager is slow or unreachable so bursts are not lost.
+  buffer_queue_size:
+    name: Buffer size (events)
+    description: Maximum number of events held in the agent buffer.
+  buffer_events_per_second:
+    name: Buffer rate (events per second)
+    description: Maximum events per second sent to the manager from the buffer.
+
+  # ---- Enrollment -----------------------------------------------------------
+  enrollment_enabled:
+    name: Enroll automatically
+    description: >-
+      Register with the manager on first start. Turn off only if you create the
+      agent on the manager yourself and supply the key as /data/ossec/etc/client.keys.
+  enrollment_address:
+    name: Enrollment server address
+    description: Address of the manager's enrollment service (authd) if it differs from the manager address.
+  enrollment_port:
+    name: Enrollment port
+    description: Port of the enrollment service. The Wazuh default is 1515.
+  enrollment_password:
+    name: Registration password
+    description: >-
+      The password your manager requires for new agents (the manager's authd.pass).
+      Leave empty if your manager does not require one.
+  enrollment_ca_path:
+    name: Manager CA certificate
+    description: >-
+      Path to the CA certificate that signed the manager's enrollment certificate,
+      for example /config/ca.pem. Enables verification of the manager's identity.
+  enrollment_certificate_path:
+    name: Agent certificate
+    description: >-
+      Path to this agent's certificate, for example /config/agent.pem.
+      Set together with the agent key.
+  enrollment_key_path:
+    name: Agent certificate key
+    description: >-
+      Path to the key for the agent certificate, for example /config/agent.key.
+      Set together with the certificate.
+  enrollment_delay:
+    name: Delay after enrollment (seconds)
+    description: How long the agent waits after enrolling before it connects, so the manager can register the key.
+  enrollment_use_source_ip:
+    name: Register with the source IP
+    description: Register the agent with the IP address it connects from instead of "any". Leave off behind NAT.
+  force_reenroll:
+    name: Enroll again on the next start
+    description: >-
+      Discards the saved agent key so the agent enrolls again, for example after
+      you deleted the agent on the manager. Turn it off again afterwards,
+      otherwise the agent re-enrolls on every start.
+  agent_name:
+    name: Agent name
+    description: >-
+      Name shown in Wazuh. Defaults to the Home Assistant host name. Must be unique
+      on the manager: set it if you run several Home Assistant installations.
+  agent_groups:
+    name: Agent groups
+    description: Wazuh groups to put this agent in on enrollment. The groups must already exist on the manager.
+
+  # ---- Identity -------------------------------------------------------------
+  auto_labels:
+    name: Add Home Assistant labels
+    description: >-
+      Tag the agent with the Home Assistant OS, Core and Supervisor versions, machine
+      type and architecture so you can filter on them in the Wazuh dashboard.
+  agent_labels:
+    name: Custom labels
+    description: Your own key/value labels added to every event this agent sends.
+    fields:
+      key:
+        name: Key
+        description: Label name. Letters, digits, "-", "_", "." and "@".
+      value:
+        name: Value
+        description: Label value.
+
+  # ---- Log collection -------------------------------------------------------
+  journal_enabled:
+    name: Collect the host journal
+    description: >-
+      Read the Home Assistant OS journal: SSH logins, kernel messages and the logs of
+      Home Assistant Core, the Supervisor and apps. Choose what is sent below.
+  journal_auth:
+    name: Journal - logins and privilege use
+    description: SSH (sshd, dropbear), sudo, su, login and logind messages.
+  journal_kernel:
+    name: Journal - kernel warnings
+    description: Kernel messages of warning severity and above (hardware errors, out-of-memory kills).
+  journal_homeassistant:
+    name: Journal - Home Assistant Core
+    description: The Home Assistant Core log, including failed login attempts to the web interface.
+  journal_supervisor:
+    name: Journal - Supervisor
+    description: The Home Assistant Supervisor log.
+  journal_errors:
+    name: Journal - errors from anything
+    description: Messages of error severity and above from any service or app.
+  journal_apps:
+    name: Journal - all app logs
+    description: Every message from every installed app. Can be a lot of data.
+  journal_all:
+    name: Journal - everything
+    description: Send the whole journal and ignore the selections above. Very noisy.
+  journal_filters:
+    name: Journal - custom filters
+    description: >-
+      Extra journal filters, each matching one journald field (PCRE2 regular expression).
+      Use "ossec_extra.conf" for filters that need several fields at once.
+    fields:
+      field:
+        name: Field
+        description: Journal field name, for example SYSLOG_IDENTIFIER or PRIORITY.
+      pattern:
+        name: Pattern
+        description: Regular expression the field value must match, for example ^addon_core_ssh$.
+      ignore_if_missing:
+        name: Ignore if missing
+        description: Skip the entry instead of failing the filter when the field is absent.
+  ha_core_log_enabled:
+    name: Read home-assistant.log
+    description: >-
+      Also read /homeassistant/home-assistant.log. Core's log is already in the journal,
+      so only enable this if the journal is turned off.
+  log_files:
+    name: Custom log files
+    description: Additional log files to read (for example /share/myapp.log).
+    fields:
+      path:
+        name: Path
+        description: File path; wildcards and strftime patterns are allowed.
+      format:
+        name: Format
+        description: Log format. Use "syslog" for ordinary one-line-per-event text logs. Defaults to syslog.
+      only_future_events:
+        name: Only new events
+        description: Skip what was already in the file when the agent started. Default yes.
+      ignore:
+        name: Ignore pattern
+        description: PCRE2 regular expression; matching lines are dropped.
+      restrict:
+        name: Restrict pattern
+        description: PCRE2 regular expression; only matching lines are sent.
+      exclude:
+        name: Exclude pattern
+        description: File name wildcard to skip when the path uses wildcards.
+      age:
+        name: Maximum file age
+        description: Ignore files not modified within this time, for example 1d.
+  log_commands:
+    name: Command output
+    description: Commands whose output is collected as log events. They run inside this app's container.
+    fields:
+      command:
+        name: Command
+        description: The command line to run.
+      format:
+        name: Format
+        description: "command: each output line is an event. full_command (default): the whole output is one event."
+      frequency:
+        name: Frequency (seconds)
+        description: How often to run it. Default 360.
+      alias:
+        name: Alias
+        description: A name shown instead of the command in the event.
+
+  # ---- File integrity monitoring -------------------------------------------
+  fim_enabled:
+    name: File integrity monitoring
+    description: Detect added, changed and deleted files in the directories below.
+  fim_frequency:
+    name: Full scan interval (seconds)
+    description: How often a complete scan runs. Real-time directories are watched continuously in addition.
+  fim_scan_on_start:
+    name: Scan on start
+    description: Run a scan when the agent starts.
+  fim_directories:
+    name: Monitored directories
+    description: >-
+      Directories to watch. The Home Assistant configuration (/homeassistant) and
+      certificates (/ssl) are the paths this app can see.
+    fields:
+      path:
+        name: Path
+        description: Absolute directory or file path (no commas).
+      realtime:
+        name: Real time
+        description: Watch continuously instead of only at scheduled scans.
+      report_changes:
+        name: Report content changes
+        description: >-
+          Send what changed inside text files. Never turn this on for files with
+          secrets: the content is sent to the manager.
+      check_all:
+        name: Check everything
+        description: Check size, permissions, owner, group, times and hashes. Default yes.
+      restrict:
+        name: Restrict to names
+        description: Only files whose name matches this simple regular expression.
+      tags:
+        name: Tags
+        description: Comma-separated tags added to alerts for this directory.
+      recursion_level:
+        name: Recursion depth
+        description: How many subdirectory levels to descend (0 to 320).
+  fim_ignore:
+    name: Ignore paths
+    description: Files or directories to leave out of reports.
+  fim_ignore_sregex:
+    name: Ignore patterns
+    description: >-
+      Patterns for paths to ignore. Wazuh's simple regex: ^ and $ anchor, | means or,
+      and "." is an ordinary dot. The defaults skip logs, databases and caches that change constantly.
+  fim_nodiff:
+    name: Never send content of
+    description: Files whose content must never be sent, even if content reporting is on.
+  fim_nodiff_sregex:
+    name: Never send content matching
+    description: Patterns for paths whose content must never be sent.
+  fim_max_eps:
+    name: Maximum events per second
+    description: Throttle for file integrity events (0 disables the limit).
+  fim_process_priority:
+    name: Scan priority
+    description: Process niceness of the scanner, -20 (highest) to 19 (lowest).
+  fim_file_limit:
+    name: Maximum monitored files
+    description: Files beyond this number are not monitored.
+  fim_sync_enabled:
+    name: Synchronize with the manager
+    description: Keep the manager's file inventory in sync with the agent's.
+  fim_sync_interval:
+    name: Synchronization interval
+    description: A number followed by s, m, h or d. Default 5m.
+  fim_sync_max_eps:
+    name: Synchronization rate
+    description: Maximum synchronization messages per second.
+
+  # ---- Rootkit and policy checks -------------------------------------------
+  rootcheck_enabled:
+    name: Rootkit checks
+    description: Look for known rootkit files and anomalies. This runs inside the app container.
+  rootcheck_frequency:
+    name: Rootkit check interval (seconds)
+    description: How often the checks run.
+  rootcheck_check_files:
+    name: Check for rootkit files
+    description: Look for files known to belong to rootkits.
+  rootcheck_check_trojans:
+    name: Check for trojaned binaries
+    description: Look for system binaries that were replaced.
+  rootcheck_check_dev:
+    name: Check /dev
+    description: Look for unexpected files in /dev.
+  rootcheck_check_sys:
+    name: Check system files
+    description: Look for anomalous permissions on system files.
+  rootcheck_check_pids:
+    name: Check for hidden processes
+    description: Compare the process table with what kill() reports. Off by default (only sees this app's processes).
+  rootcheck_check_ports:
+    name: Check for hidden ports
+    description: Compare listening ports with what can be bound. Off by default (only sees this app's network).
+  rootcheck_check_if:
+    name: Check network interfaces
+    description: Look for interfaces in promiscuous mode.
+  sca_enabled:
+    name: Security configuration assessment
+    description: >-
+      Run CIS-style policies. The built-in policy checks this app's Debian container,
+      not Home Assistant OS, so it is off by default. Enable it with your own policies below.
+  sca_scan_on_start:
+    name: SCA - scan on start
+    description: Run a scan when the agent starts.
+  sca_interval:
+    name: SCA - interval
+    description: A number followed by s, m, h, d, w or M. Default 12h.
+  sca_skip_nfs:
+    name: SCA - skip network filesystems
+    description: Do not scan NFS and CIFS mounts.
+  sca_policies:
+    name: SCA - policy files
+    description: Paths of extra policy YAML files, for example /config/sca/home-assistant.yml.
+
+  # ---- System inventory -----------------------------------------------------
+  inventory_enabled:
+    name: System inventory
+    description: Report hardware, operating system and network details to the manager.
+  inventory_interval:
+    name: Inventory interval
+    description: A number followed by s, m, h, d, w or M. Default 1h.
+  inventory_scan_on_start:
+    name: Inventory - scan on start
+    description: Collect the inventory when the agent starts.
+  inventory_hardware:
+    name: Inventory - hardware
+    description: CPU, memory and board details (these are the device's, shared with the host kernel).
+  inventory_os:
+    name: Inventory - operating system
+    description: Operating system and kernel details.
+  inventory_network:
+    name: Inventory - network
+    description: Network interfaces and addresses seen from inside this app.
+  inventory_packages:
+    name: Inventory - packages
+    description: Software packages of this app's container image. Enables vulnerability detection for them.
+  inventory_ports:
+    name: Inventory - ports
+    description: Open ports seen from inside this app (not the host's).
+  inventory_processes:
+    name: Inventory - processes
+    description: Processes of this app's container (not the host's).
+
+  # ---- Response and advanced ------------------------------------------------
+  active_response_enabled:
+    name: Active response
+    description: >-
+      Allow the manager to run response scripts on this agent. Most scripts act on the
+      app's own container, not on Home Assistant OS, so this is off by default.
+  allow_remote_commands:
+    name: Allow remote commands
+    description: >-
+      Allow the manager to push command-running settings to this agent through centralized
+      configuration. Off by default: anyone who controls the manager could then run commands here.
+  debug_level:
+    name: Debug level
+    description: 0 = normal, 1 = debug, 2 = verbose debug. Shows in the app log.
+  log_max_size_mb:
+    name: Agent log size limit (MB)
+    description: The agent's own log files are trimmed above this size (one previous copy is kept).
+  use_custom_ossec_conf:
+    name: Use my own ossec.conf
+    description: >-
+      Ignore every connection option above and use /config/ossec.conf exactly as written.
+      For experts; you take over everything including the manager address.
