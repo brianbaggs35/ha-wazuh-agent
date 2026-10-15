@@ -11,8 +11,6 @@ url: https://github.com/brianbaggs35/ha-wazuh-agent
 arch:
   - aarch64
   - amd64
-# Experimental until it has been verified on real Home Assistant OS hardware.
-stage: experimental
 init: false
 # Stopping flushes the agent's databases; give it time.
 timeout: 30

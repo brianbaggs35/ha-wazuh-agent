@@ -5,9 +5,9 @@ This app runs the [Wazuh](https://wazuh.com) agent on Home Assistant OS and enro
 other endpoints: its alerts, inventory and file integrity events appear in the Wazuh
 dashboard under **Agents**.
 
-> **Status: experimental.** The project's tests run the app against real Wazuh managers
-> (enrollment, restarts, journal collection, file integrity, registration passwords). It
-> has not yet been verified on real Home Assistant OS hardware, hence the label.
+> **Testing.** The project's tests run the app against real Wazuh managers (enrollment,
+> restarts, journal collection, file integrity, registration passwords). Home Assistant
+> itself (the Supervisor, AppArmor enforcement, ingress) is not part of the automated tests.
 
 Bundled agent: **Wazuh 4.14.9** (see the changelog for the version in each release).
 
