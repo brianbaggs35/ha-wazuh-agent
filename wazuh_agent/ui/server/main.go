@@ -14,6 +14,9 @@ import (
 	"time"
 )
 
+// logPrefix starts every line the server writes to the app log.
+const logPrefix = "wazuh-ha-ui:"
+
 // Seams for the tests: the real values are what runs in the app.
 var (
 	exit            = os.Exit
@@ -32,7 +35,7 @@ func main() {
 func run(ctx context.Context, getenv func(string) string, logs io.Writer, ready chan<- net.Addr) int {
 	cfg, err := LoadConfig(getenv)
 	if err != nil {
-		fmt.Fprintln(logs, "wazuh-ha-ui:", err)
+		fmt.Fprintln(logs, logPrefix, err)
 		return 2
 	}
 
@@ -46,7 +49,7 @@ func run(ctx context.Context, getenv func(string) string, logs io.Writer, ready 
 
 	listener, err := listen("tcp", cfg.Listen)
 	if err != nil {
-		fmt.Fprintln(logs, "wazuh-ha-ui:", err)
+		fmt.Fprintln(logs, logPrefix, err)
 		return 1
 	}
 	if ready != nil {
@@ -67,13 +70,13 @@ func run(ctx context.Context, getenv func(string) string, logs io.Writer, ready 
 
 	select {
 	case err := <-failed:
-		fmt.Fprintln(logs, "wazuh-ha-ui:", err)
+		fmt.Fprintln(logs, logPrefix, err)
 		return 1
 	case <-ctx.Done():
-		shutdown, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 		defer cancel()
 		if err := httpServer.Shutdown(shutdown); err != nil {
-			fmt.Fprintln(logs, "wazuh-ha-ui:", err)
+			fmt.Fprintln(logs, logPrefix, err)
 			return 1
 		}
 		return 0

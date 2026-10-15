@@ -15,8 +15,8 @@ export function useAction<T, A extends unknown[]>(action: (...args: A) => Promis
         result.value = value
         error.value = null
       }
-    } catch (caught) {
-      if (!disposed) error.value = caught instanceof Error ? caught : new Error(String(caught))
+    } catch (error_) {
+      if (!disposed) error.value = error_ instanceof Error ? error_ : new Error(String(error_))
     } finally {
       if (!disposed) busy.value = false
     }

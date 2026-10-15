@@ -14,22 +14,20 @@ const props = defineProps<{
 
 defineEmits<{ 'cycle-theme': [] }>()
 
-const themeIcon = computed(() =>
-  props.theme === 'light'
-    ? mdiWhiteBalanceSunny
-    : props.theme === 'dark'
-      ? mdiBrightness4
-      : mdiThemeLightDark,
-)
+const themeIcons: Partial<Record<ThemePreference, string>> = {
+  light: mdiWhiteBalanceSunny,
+  dark: mdiBrightness4,
+}
+const themeIcon = computed(() => themeIcons[props.theme] ?? mdiThemeLightDark)
 
 // "Updated" is dropped on narrow screens, where the chip would otherwise be cut off.
-const live = computed(() =>
-  props.offline
-    ? { prefix: '', text: 'Offline' }
-    : props.fetchedAt
-      ? { prefix: 'Updated ', text: timeAgo(props.fetchedAt.toISOString(), props.now) }
-      : { prefix: '', text: 'Connecting…' },
-)
+const live = computed(() => {
+  if (props.offline) return { prefix: '', text: 'Offline' }
+  if (props.fetchedAt) {
+    return { prefix: 'Updated ', text: timeAgo(props.fetchedAt.toISOString(), props.now) }
+  }
+  return { prefix: '', text: 'Connecting…' }
+})
 </script>
 
 <template>
