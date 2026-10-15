@@ -14,6 +14,9 @@ __pycache__/
 
 # Test and scan output
 *.sarif
+coverage.xml
+.coverage
+.scannerwork/
 trivy-*.json
 sbom*.json
 e2e-results/

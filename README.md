@@ -1,6 +1,7 @@
 # Wazuh Agent for Home Assistant
 
 [![CI](https://github.com/brianbaggs35/ha-wazuh-agent/actions/workflows/ci.yaml/badge.svg)](https://github.com/brianbaggs35/ha-wazuh-agent/actions/workflows/ci.yaml)
+[![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=brianbaggs35_ha-wazuh-agent&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=brianbaggs35_ha-wazuh-agent)
 
 A [Home Assistant](https://www.home-assistant.io) app (formerly "add-on") that runs the
 [Wazuh](https://wazuh.com) agent on Home Assistant OS and **enrolls it in your existing Wazuh
@@ -56,7 +57,7 @@ is released. See the [changelog](wazuh_agent/CHANGELOG.md).
 | Agent | Installed from Wazuh's official apt repository; the build fails if the repository's signing key differs from the pinned fingerprint. |
 | Tests | Render tests (every Wazuh daemon checks the generated configuration) and end-to-end tests against the official `wazuh-manager` image: enrollment, persistence across restarts and updates, journal collection and filtering, file integrity, registration passwords, re-enrollment. |
 | Architectures | `amd64` and `aarch64`, each built and tested on a native runner. |
-| Scans | Trivy on the image (vulnerabilities, a gate on fixable HIGH and CRITICAL), configuration and secrets, plus an SBOM per release. |
+| Scans | Trivy on the image (vulnerabilities, a gate on fixable HIGH and CRITICAL), configuration and secrets, plus an SBOM per release; SonarQube Cloud analysis of the code with its quality gate. |
 | Releases | Published only after the exact images pass the tests and scans; the multi-arch image is signed with Sigstore and verified again from the registry. |
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) to run the tests yourself.
