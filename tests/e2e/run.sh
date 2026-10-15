@@ -3,7 +3,7 @@
 #
 #   IMAGE=ha-wazuh-agent:test tests/e2e/run.sh [scenario ...]
 #
-# Scenarios: validation enroll journal fim config upgrade duplicate reenroll password   (default: all)
+# Scenarios: validation enroll journal fim config supervisor upgrade duplicate reenroll password   (default: all)
 # Environment: IMAGE (image under test), MANAGER_VERSION (default 4.14.9),
 #              E2E_KEEP=1 to leave containers behind for debugging.
 set -uo pipefail
@@ -280,6 +280,60 @@ scenario_upgrade() {
 }
 
 # ---------------------------------------------------------------------------
+scenario_supervisor() {
+    log "supervisor: the agent name and Home Assistant labels come from the Supervisor API"
+    # A stand-in Supervisor: static files at the two paths the app reads, reachable as
+    # "supervisor" (the name Home Assistant gives the real one).
+    local sup="e2e-supervisor-${E2E_ID}" web="e2e-sup-web-${E2E_ID}"
+    local vol="e2e-sup-data-${E2E_ID}" logvol="e2e-sup-logs-${E2E_ID}" c="e2e-sup-agent-${E2E_ID}"
+    track_container "${sup}"
+    track_volume "${web}"
+    track_volume "${logvol}"
+    docker volume create "${web}" > /dev/null
+    docker run --rm -v "${web}:/www" --entrypoint bash "${IMAGE}" -c '
+        mkdir -p /www/addons/self
+        cat > /www/info <<EOF
+{"result": "ok", "data": {"hostname": "My HA Box", "operating_system": "Home Assistant OS 16.2", "hassos": "16.2",
+ "homeassistant": "2026.10.1", "supervisor": "2026.10.0", "machine": "rpi4-64", "arch": "aarch64", "channel": "stable"}}
+EOF
+        cat > /www/addons/self/info <<EOF
+{"result": "ok", "data": {"version": "9.9.9"}}
+EOF'
+    docker run -d --name "${sup}" --network "${E2E_NET}" --network-alias supervisor \
+        -v "${web}:/www:ro" busybox:stable httpd -f -p 80 -h /www > /dev/null
+
+    docker volume create "${logvol}" > /dev/null
+    docker run --rm -v "${logvol}:/l" --entrypoint bash "${IMAGE}" -c 'touch /l/probe.log'
+    # No agent_name: it must come from the Supervisor's hostname ("My HA Box" -> "My-HA-Box").
+    write_options "${vol}" "{\"manager_address\": \"${MANAGER}\", ${FAST},
+        \"log_files\": [{\"path\": \"/logs/probe.log\", \"format\": \"syslog\"}]}"
+    agent_start "${c}" "${vol}" -e SUPERVISOR_TOKEN=e2e-token -v "${logvol}:/logs"
+
+    if wait_for 150 "agent active under the Supervisor's host name" manager_agent_active "My-HA-Box"; then
+        pass "the agent name defaults to the Home Assistant host name (My-HA-Box)"
+    else
+        fail "the agent name defaults to the Home Assistant host name (My-HA-Box)"
+        dump_agent "${c}"
+        return
+    fi
+    agent_settle "${c}"
+    wait_for 60 "log file picked up" container_log_has "${c}" "Analyzing file: '/logs/probe.log'"
+    docker run --rm -v "${logvol}:/l" --entrypoint bash "${IMAGE}" -c \
+        'echo "Oct 15 10:00:00 homeassistant e2eprobe: e2e-supervisor-probe" >> /l/probe.log'
+    if wait_for 90 "event with labels" manager_has_archive "e2e-supervisor-probe"; then
+        local event
+        event="$(docker exec "${MANAGER}" bash -c "grep -F e2e-supervisor-probe /var/ossec/logs/archives/archives.json | head -1")"
+        local label
+        for label in '"ha_os_version":"16.2"' '"ha_core_version":"2026.10.1"' '"ha_supervisor_version":"2026.10.0"' \
+            '"ha_machine":"rpi4-64"' '"ha_app_version":"9.9.9"'; do
+            grep -qF -- "${label}" <<< "${event}" && pass "the event carries ${label}" || fail "the event carries ${label}"
+        done
+    else
+        fail "an event reached the manager"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 scenario_duplicate() {
     log "duplicate: a second agent with the same name is refused and the first is unaffected"
     local v1="e2e-dup1-data-${E2E_ID}" v2="e2e-dup2-data-${E2E_ID}" c1="e2e-dup1-${E2E_ID}" c2="e2e-dup2-${E2E_ID}" name="e2e-dup"
@@ -321,6 +375,13 @@ scenario_reenroll() {
         fail "force_reenroll registered the agent again"
         dump_agent "${c}"
     fi
+    # Wazuh rewrites the file while enrolling, so the owner may be root or wazuh; what matters is
+    # that it is group wazuh and not readable by everyone else.
+    local keyperm
+    keyperm="$(docker exec "${c}" stat -c '%U:%G %a' /data/ossec/etc/client.keys)"
+    info "client.keys after re-enrollment: ${keyperm}"
+    [[ "${keyperm}" =~ ^(root|wazuh):wazuh\ 6[04]0$ ]] \
+        && pass "the new agent key is not world readable" || fail "the new agent key is not world readable (${keyperm})"
     container_log_has "${c}" 'force_reenroll is on' \
         && pass "the app warns that force_reenroll is on" || fail "the app warns that force_reenroll is on"
 }
@@ -361,7 +422,7 @@ scenario_password() {
 # ---------------------------------------------------------------------------
 main() {
     local scenarios=("$@")
-    [[ ${#scenarios[@]} -gt 0 ]] || scenarios=(validation enroll journal fim config upgrade duplicate reenroll password)
+    [[ ${#scenarios[@]} -gt 0 ]] || scenarios=(validation enroll journal fim config supervisor upgrade duplicate reenroll password)
 
     log "image under test: ${IMAGE}   manager: wazuh-manager ${MANAGER_VERSION}"
     # Validation needs no manager; everything else does.
