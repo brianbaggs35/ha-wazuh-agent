@@ -26,6 +26,9 @@ Version: 4.99.0-1
 
 Package: wazuh-agent
 Version: 4.14.9-1
+Description: Wazuh agent
+ a continuation line, which is not a field
+a line that is not a field either
 Filename: pool/main/w/wazuh-agent/wazuh-agent_4.14.9-1_amd64.deb
 
 Package: wazuh-agent
