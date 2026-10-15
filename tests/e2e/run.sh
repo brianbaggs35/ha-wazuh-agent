@@ -3,7 +3,7 @@
 #
 #   IMAGE=ha-wazuh-agent:test tests/e2e/run.sh [scenario ...]
 #
-# Scenarios: validation enroll journal fim config supervisor upgrade duplicate reenroll password   (default: all)
+# Scenarios: validation enroll journal fim config supervisor ui capabilities upgrade crash duplicate reenroll password   (default: all)
 # Environment: IMAGE (image under test), MANAGER_VERSION (default 4.14.9),
 #              E2E_KEEP=1 to leave containers behind for debugging.
 set -uo pipefail
@@ -335,6 +335,100 @@ EOF'
 }
 
 # ---------------------------------------------------------------------------
+scenario_ui() {
+    log "ui: the status page shows the agent's real state, read-only, unprivileged, ingress-only"
+    local vol="e2e-ui-data-${E2E_ID}" c="e2e-ui-${E2E_ID}" name="e2e-ui"
+    write_options "${vol}" "{\"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", \"ui_update_check\": false, ${FAST}}"
+    # The default allow list is the Supervisor's ingress gateway; the test client is not that, so
+    # open it for this container only. The closed one below keeps the default.
+    agent_start "${c}" "${vol}" -e WAZUH_UI_ALLOW=0.0.0.0/0
+
+    wait_for 150 "agent active" manager_agent_active "${name}" || { fail "agent active"; dump_agent "${c}"; return 0; }
+    if wait_for 90 "the page reports running" ui_state_is "${c}" running; then
+        pass "the page reports the agent as running"
+    else
+        fail "the page reports the agent as running (it says: $(ui_json "${c}" /api/status .state))"
+        dump_agent "${c}"
+        return 0
+    fi
+
+    local want_version status id
+    want_version="$(docker image inspect "${IMAGE}" --format '{{ index .Config.Labels "com.wazuh.agent.version" }}')"
+    status="$(ui_get "${c}" /api/status)"
+    id="$(manager_agent_id "${name}")"
+    [[ "$(jq -r .registration.id <<< "${status}")" == "${id}" ]] \
+        && pass "the page shows the same agent ID as the manager (${id})" || fail "the page shows the same agent ID as the manager (${id})"
+    [[ "$(jq -r .registration.name <<< "${status}")" == "${name}" ]] \
+        && pass "the page shows the registered name" || fail "the page shows the registered name"
+    [[ "$(jq -r .connection.status <<< "${status}")" == "connected" ]] \
+        && pass "the page shows the connection as connected" || fail "the page shows the connection as connected"
+    [[ "$(jq -r .summary.agent.version <<< "${status}")" == "${want_version}" ]] \
+        && pass "the page shows the Wazuh version (${want_version})" || fail "the page shows the Wazuh version (${want_version})"
+    [[ "$(jq -r '[.daemons[] | select(.name == "wazuh-agentd") | .running] | first' <<< "${status}")" == "true" ]] \
+        && pass "the page lists the agent daemon as running" || fail "the page lists the agent daemon as running"
+    [[ "$(jq -r .summary.modules.fim <<< "${status}")" == "true" ]] \
+        && pass "the page shows file integrity monitoring as on" || fail "the page shows file integrity monitoring as on"
+
+    # Nothing the page serves may carry the agent's key.
+    local key everything
+    key="$(docker exec "${c}" awk 'NR == 1 {print $4}' /var/ossec/etc/client.keys)"
+    everything="${status}$(ui_get "${c}" /api/logs)$(ui_get "${c}" /api/connection-test)$(ui_get "${c}" /api/updates)"
+    if [[ -n "${key}" ]] && ! grep -qF -- "${key}" <<< "${everything}"; then
+        pass "the agent key appears in none of the page's responses"
+    else
+        fail "the agent key appears in none of the page's responses"
+    fi
+
+    [[ "$(ui_get "${c}" /api/logs | jq -r '.lines | map(select(contains("wazuh-agentd"))) | length')" -gt 0 ]] \
+        && pass "the log tail carries the agent's lines" || fail "the log tail carries the agent's lines"
+    [[ "$(ui_get "${c}" /api/connection-test | jq -r '[.results[] | select(.reachable)] | length')" -ge 2 ]] \
+        && pass "the connection test reaches the manager's event and enrollment ports" || fail "the connection test reaches the manager's event and enrollment ports"
+    [[ "$(ui_json "${c}" /api/updates .enabled)" == "false" ]] \
+        && pass "ui_update_check=false turns the update lookup off" || fail "ui_update_check=false turns the update lookup off"
+
+    # The page itself, and the files it loads.
+    local html asset assets_ok=1
+    html="$(ui_get "${c}" /)"
+    grep -qF '<title>Wazuh Agent</title>' <<< "${html}" && pass "the page is served" || fail "the page is served"
+    while IFS= read -r asset; do
+        [[ "$(ui_code "${c}" "/${asset}")" == 200 ]] || assets_ok=0
+    done < <(grep -oE 'assets/[^"]+' <<< "${html}")
+    [[ "${assets_ok}" == 1 ]] && pass "every script and stylesheet the page loads is served" || fail "every script and stylesheet the page loads is served"
+    [[ "$(ui_code "${c}" /assets/)" == 404 ]] && pass "directories are not listed" || fail "directories are not listed"
+    [[ "$(ui_code "${c}" /api/status -X POST)" == 405 ]] && pass "the page is read-only (POST is refused)" || fail "the page is read-only (POST is refused)"
+    ui_get "${c}" /api/status -D - -o /dev/null | grep -qi '^content-security-policy:' \
+        && pass "responses carry a content security policy" || fail "responses carry a content security policy"
+
+    # It runs without privileges.
+    [[ "$(docker exec "${c}" ps -o user= -C wazuh-ha-ui | tr -d ' ')" == wazuhui ]] \
+        && pass "the status page runs as the unprivileged wazuhui account" || fail "the status page runs as the unprivileged wazuhui account"
+
+    # Stopped, and back.
+    docker exec "${c}" /var/ossec/bin/wazuh-control stop > /dev/null 2>&1
+    if wait_for 40 "the page shows the agent stopped" ui_state_is "${c}" stopped; then
+        pass "the page shows the agent as stopped when it is"
+    else
+        fail "the page shows the agent as stopped when it is (it says: $(ui_json "${c}" /api/status .state))"
+    fi
+    if wait_for 200 "the page shows the agent running again" ui_state_is "${c}" running; then
+        pass "the app brings the agent back and the page shows it running again"
+    else
+        fail "the app brings the agent back and the page shows it running again (it says: $(ui_json "${c}" /api/status .state))"
+    fi
+
+    # By default only the Supervisor's ingress gateway may connect.
+    local closed="e2e-ui-closed-${E2E_ID}" cvol="e2e-ui-closed-data-${E2E_ID}"
+    write_options "${cvol}" "{\"manager_address\": \"${MANAGER}\", \"agent_name\": \"e2e-ui-closed\", ${FAST}}"
+    agent_start "${closed}" "${cvol}"
+    wait_for 60 "closed page up" container_log_has "${closed}" "Starting the status page"
+    sleep 3
+    [[ "$(ui_code "${closed}" /)" == 403 && "$(ui_code "${closed}" /api/status)" == 403 ]] \
+        && pass "by default the page refuses everyone but the Supervisor's ingress gateway" \
+        || fail "by default the page refuses everyone but the Supervisor's ingress gateway"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 scenario_duplicate() {
     log "duplicate: a second agent with the same name is refused and the first is unaffected"
     local v1="e2e-dup1-data-${E2E_ID}" v2="e2e-dup2-data-${E2E_ID}" c1="e2e-dup1-${E2E_ID}" c2="e2e-dup2-${E2E_ID}" name="e2e-dup"
@@ -388,6 +482,36 @@ scenario_reenroll() {
 }
 
 # ---------------------------------------------------------------------------
+scenario_crash() {
+    log "crash: a container killed mid-operation leaves state that must not block the next start"
+    local vol="e2e-crash-data-${E2E_ID}" c="e2e-crash-${E2E_ID}" name="e2e-crash"
+    write_options "${vol}" "{\"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", ${FAST}}"
+    agent_start "${c}" "${vol}"
+    wait_for 150 "agent active" manager_agent_active "${name}" || { fail "agent active"; dump_agent "${c}"; return 0; }
+
+    # No clean shutdown, like a power cut or a Supervisor timeout. Then plant what an interrupted
+    # start leaves in the data: the lock wazuh-control takes, naming a process ID that is certainly
+    # alive in the next container (1), and a daemon PID file of the dead run. Without the app
+    # clearing them, wazuh-control honours the lock for every start, forever.
+    docker kill "${c}" > /dev/null
+    docker run --rm -v "${vol}:/data" --entrypoint bash "${IMAGE}" -c '
+        mkdir -p /data/ossec/var/start-script-lock && echo 1 > /data/ossec/var/start-script-lock/pid
+        echo 1 > /data/ossec/var/run/wazuh-agentd-1.pid'
+    agent_start "${c}" "${vol}"
+
+    if wait_for 150 "agent connected after the crash" docker exec "${c}" wazuh-ha-healthcheck; then
+        pass "the agent starts and connects after an unclean stop that left a lock behind"
+    else
+        fail "the agent starts and connects after an unclean stop that left a lock behind"
+        dump_agent "${c}"
+    fi
+    container_log_has "${c}" 'Another instance is locking' \
+        && fail "no start lock error after a crash" || pass "no start lock error after a crash"
+    assert "all agent daemons run after the crash" bash -c \
+        "[[ \$(docker exec ${c} /var/ossec/bin/wazuh-control status | grep -c 'is running') -eq 5 ]]"
+}
+
+# ---------------------------------------------------------------------------
 scenario_password() {
     log "password: enrollment with a registration password"
     docker exec "${MANAGER}" bash -c '
@@ -421,9 +545,61 @@ scenario_password() {
 }
 
 # ---------------------------------------------------------------------------
+# The app asks the Supervisor for no extra capabilities, so it gets Docker's default set (less
+# what the Supervisor's "reduced" profile removes). Wazuh's documentation does not say which Linux
+# capabilities the agent needs, so this measures it: the agent is run with the smallest set that
+# works, with the set a current Supervisor leaves a container, and with none at all as a control.
+CAPS_NEEDED=(CHOWN DAC_OVERRIDE FOWNER SETGID SETUID KILL)
+CAPS_SUPERVISOR_DROPS=(NET_RAW AUDIT_WRITE MKNOD SETFCAP)
+
+scenario_capabilities() {
+    log "capabilities: the agent works with only ${CAPS_NEEDED[*]}, and not with none"
+    local minimal="e2e-cap-min-${E2E_ID}" reduced="e2e-cap-red-${E2E_ID}" none="e2e-cap-none-${E2E_ID}"
+    local args=() cap
+
+    for cap in "${CAPS_NEEDED[@]}"; do args+=(--cap-add "${cap}"); done
+    write_options "${minimal}-d" "{\"manager_address\": \"${MANAGER}\", \"agent_name\": \"e2e-cap-min\", ${FAST}}"
+    agent_start "${minimal}" "${minimal}-d" --cap-drop ALL "${args[@]}" -e WAZUH_UI_ALLOW=0.0.0.0/0
+
+    args=()
+    for cap in "${CAPS_SUPERVISOR_DROPS[@]}"; do args+=(--cap-drop "${cap}"); done
+    write_options "${reduced}-d" "{\"manager_address\": \"${MANAGER}\", \"agent_name\": \"e2e-cap-red\", ${FAST}}"
+    agent_start "${reduced}" "${reduced}-d" "${args[@]}" -e WAZUH_UI_ALLOW=0.0.0.0/0
+
+    write_options "${none}-d" "{\"manager_address\": \"${MANAGER}\", \"agent_name\": \"e2e-cap-none\", ${FAST}}"
+    agent_start "${none}" "${none}-d" --cap-drop ALL -e WAZUH_UI_ALLOW=0.0.0.0/0
+
+    local c name
+    for c in "${minimal}:e2e-cap-min:the minimal set" "${reduced}:e2e-cap-red:the Supervisor's reduced set"; do
+        name="${c#*:}"
+        name="${name%%:*}"
+        local label="${c##*:}" container="${c%%:*}"
+        if wait_for 150 "${name} active" manager_agent_active "${name}"; then
+            pass "enrolls with ${label}"
+        else
+            fail "enrolls with ${label}"
+            dump_agent "${container}"
+            continue
+        fi
+        assert "is connected with ${label}" wait_for 150 "connected" docker exec "${container}" wazuh-ha-healthcheck
+        assert "runs all five daemons with ${label}" bash -c \
+            "[[ \$(docker exec ${container} /var/ossec/bin/wazuh-control status | grep -c 'is running') -eq 5 ]]"
+        assert "the status page reports running with ${label}" wait_for 90 "running" ui_state_is "${container}" running
+        container_log_has "${container}" 'Operation not permitted' \
+            && fail "no permission errors in the log with ${label}" || pass "no permission errors in the log with ${label}"
+    done
+
+    # The control: with no capabilities at all the agent must not get as far as the manager, which is
+    # what shows the two runs above passed because of the capabilities listed and not by accident.
+    [[ -z "$(manager_agent_line e2e-cap-none)" ]] && ! docker exec "${none}" wazuh-ha-healthcheck > /dev/null 2>&1 \
+        && pass "with no capabilities at all the agent cannot run (so the list above is needed)" \
+        || fail "with no capabilities at all the agent cannot run (so the list above is needed)"
+}
+
+# ---------------------------------------------------------------------------
 main() {
     local scenarios=("$@")
-    [[ ${#scenarios[@]} -gt 0 ]] || scenarios=(validation enroll journal fim config supervisor upgrade duplicate reenroll password)
+    [[ ${#scenarios[@]} -gt 0 ]] || scenarios=(validation enroll journal fim config supervisor ui capabilities upgrade crash duplicate reenroll password)
 
     log "image under test: ${IMAGE}   manager: wazuh-manager ${MANAGER_VERSION}"
     # Validation needs no manager; everything else does.
@@ -435,8 +611,13 @@ main() {
         manager_start
     fi
 
+    local first_c first_v
     for s in "${scenarios[@]}"; do
+        first_c=${#E2E_CONTAINERS[@]}
+        first_v=${#E2E_VOLUMES[@]}
         "scenario_${s}"
+        # E2E_KEEP leaves everything for debugging, as it does at the end.
+        [[ -n "${E2E_KEEP:-}" ]] || release_since "${first_c}" "${first_v}"
     done
     summary
     return

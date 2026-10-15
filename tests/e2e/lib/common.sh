@@ -58,6 +58,22 @@ cleanup() {
     return 0
 }
 
+# release_since FIRST_CONTAINER FIRST_VOLUME
+# Removes what a scenario created (everything tracked from those positions on), so only the manager
+# and the scenario that is running use the machine. Called after each scenario, not just at the end.
+release_since() {
+    local first_c="$1" first_v="$2" i
+    local count_c=$((${#E2E_CONTAINERS[@]} - first_c)) count_v=$((${#E2E_VOLUMES[@]} - first_v))
+    for ((i = first_c; i < ${#E2E_CONTAINERS[@]}; i++)); do
+        docker rm -f "${E2E_CONTAINERS[i]}" > /dev/null 2>&1 || true
+    done
+    for ((i = first_v; i < ${#E2E_VOLUMES[@]}; i++)); do
+        docker volume rm -f "${E2E_VOLUMES[i]}" > /dev/null 2>&1 || true
+    done
+    info "removed the scenario's ${count_c} containers and ${count_v} volumes"
+    return 0
+}
+
 # wait_for SECONDS DESCRIPTION COMMAND...   (polls every 2s)
 wait_for() {
     local timeout="$1" desc="$2"
@@ -236,6 +252,43 @@ dump_agent() {
     info "---- last 40 lines of ${name} ----"
     docker logs --tail 40 "${name}" 2>&1 | sed 's/^/    | /'
     return 0
+}
+
+# ---- The status page ---------------------------------------------------------
+
+# ui_get HOST PATH [curl options...] -> the response body. The request comes from a helper
+# container on the test network, like a client other than the Supervisor would.
+ui_get() {
+    local host="$1" path="$2"
+    shift 2
+    docker run --rm --network "${E2E_NET}" --entrypoint curl "${IMAGE}" -sS -m 10 "$@" "http://${host}:8099${path}"
+    return
+}
+
+# ui_code HOST PATH [curl options...] -> the HTTP status code
+ui_code() {
+    local host="$1" path="$2"
+    shift 2
+    docker run --rm --network "${E2E_NET}" --entrypoint curl "${IMAGE}" -sS -m 10 -o /dev/null -w '%{http_code}' "$@" "http://${host}:8099${path}"
+    return
+}
+
+# ui_json HOST PATH JQ-FILTER
+ui_json() {
+    local host="$1" path="$2" filter="$3"
+    ui_get "${host}" "${path}" | jq -r "${filter}"
+    return
+}
+
+# ui_state_is HOST STATE... : the page reports one of the given states (a predicate for wait_for)
+ui_state_is() {
+    local host="$1" state current
+    shift
+    current="$(ui_json "${host}" /api/status .state 2> /dev/null)"
+    for state in "$@"; do
+        [[ "${current}" == "${state}" ]] && return 0
+    done
+    return 1
 }
 
 summary() {

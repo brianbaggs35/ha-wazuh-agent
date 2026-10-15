@@ -13,6 +13,7 @@ set -uo pipefail
 readonly OSSEC="/var/ossec"
 readonly CONTROL="${OSSEC}/bin/wazuh-control"
 readonly OPTIONS="${OPTIONS_FILE:-/data/options.json}"
+readonly PUBLIC="/run/wazuh-ha/public"
 readonly LOGS=("${OSSEC}/logs/ossec.log" "${OSSEC}/logs/active-responses.log")
 
 max_mb="$(jq -r '.log_max_size_mb // 10' "${OPTIONS}" 2> /dev/null || echo 10)"
@@ -44,8 +45,33 @@ rotate_logs() {
     done
 }
 
+status_text=""
+
+refresh_status() {
+    status_text="$("${CONTROL}" status 2> /dev/null || true)"
+}
+
 running_daemons() {
-    "${CONTROL}" status 2> /dev/null | awk '/ is running/ {print $1}'
+    awk '/ is running/ {print $1}' <<< "${status_text}"
+}
+
+# publish_file NAME   (content on stdin) writes PUBLIC/NAME atomically and world-readable, so the
+# status page, which runs as an unprivileged user, never reads a half-written file.
+publish_file() {
+    local name="$1" tmp="${PUBLIC}/.$1.tmp"
+    cat > "${tmp}" && chmod 0644 "${tmp}" && mv -f "${tmp}" "${PUBLIC}/${name}"
+}
+
+# Everything the status page shows, and nothing secret: daemon states, the connection state the
+# agent keeps for itself, who it is registered as (the ID and name from client.keys, never the key),
+# and the tail of its log.
+publish() {
+    local id="" name=""
+    printf '%s\n' "${status_text}" | publish_file daemons.txt
+    cat "${OSSEC}/var/run/wazuh-agentd.state" 2> /dev/null | publish_file agentd.state
+    read -r id name _ < "${OSSEC}/etc/client.keys" 2> /dev/null || true
+    jq -cn --arg id "${id}" --arg name "${name}" '{id: $id, name: $name}' | publish_file identity.json
+    tail -n 300 "${OSSEC}/logs/ossec.log" 2> /dev/null | publish_file log.txt
 }
 
 fail() {
@@ -65,6 +91,8 @@ fail() {
 
 bashio::log.info "Starting the Wazuh agent daemons."
 "${CONTROL}" start || fail "wazuh-control could not start the agent."
+refresh_status
+publish
 
 tail -n +1 -F "${OSSEC}/logs/ossec.log" 2> /dev/null &
 tail_pid=$!
@@ -73,7 +101,10 @@ tail_pid=$!
 # user switched off legitimately exit, and must not count as failures.
 sleep 10 &
 wait $!
+refresh_status
 mapfile -t expected < <(running_daemons)
+printf '%s\n' "${expected[@]}" | publish_file expected.txt
+publish
 if ! printf '%s\n' "${expected[@]}" | grep -qx 'wazuh-agentd'; then
     fail "wazuh-agentd did not stay up. The agent log above says why (commonly: wrong manager address, or enrollment refused)."
 fi
@@ -90,6 +121,8 @@ while true; do
     sleep 5 &
     wait $!
 
+    refresh_status
+    publish
     mapfile -t now < <(running_daemons)
     for daemon in "${expected[@]}"; do
         if printf '%s\n' "${now[@]}" | grep -qx "${daemon}"; then

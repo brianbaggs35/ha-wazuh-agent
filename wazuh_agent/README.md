@@ -17,6 +17,12 @@ of your endpoints.
   optional **configuration assessment** with your own policies.
 - Any **log file or command output** you add.
 
+## A status page in the sidebar
+
+Turn on **Show in sidebar** and a **Wazuh Agent** panel appears: whether the agent is running and
+connected, who it is registered as, what it monitors, whether a newer agent exists, a connection
+test and the agent's log. It is read-only.
+
 ## Why it is safe to run
 
 The app asks for **no extra privileges**: no host network, no open ports, no added
@@ -32,3 +38,6 @@ Open the **Documentation** tab for the full guide. In short:
 2. Set **Wazuh manager address** in the Configuration tab (and a registration password if
    your manager requires one).
 3. Start the app and check the **Log** tab for `Connected to the server`.
+
+*Wazuh is a trademark of Wazuh, Inc. This app is an independent project: it is not affiliated with,
+endorsed by or sponsored by Wazuh, Inc.*

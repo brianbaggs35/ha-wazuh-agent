@@ -1,2 +1,6 @@
 *
 !rootfs
+!ui
+**/node_modules
+ui/web/dist
+ui/web/coverage

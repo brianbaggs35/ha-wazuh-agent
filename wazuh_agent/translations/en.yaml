@@ -379,3 +379,8 @@ configuration:
     description: >-
       Ignore every connection option above and use /config/ossec.conf exactly as written.
       For experts; you take over everything including the manager address.
+  ui_update_check:
+    name: Check for updates on the status page
+    description: >-
+      Let the status page look up the newest Wazuh agent (packages.wazuh.com) and whether this app
+      has an update. Turn it off if this device must not make those requests.

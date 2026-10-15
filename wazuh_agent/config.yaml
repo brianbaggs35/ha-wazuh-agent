@@ -43,6 +43,14 @@ map:
   - type: app_config
     read_only: true
 
+# --- The status page ------------------------------------------------------
+# A read-only "Wazuh Agent" panel in the sidebar (shown when "Show in sidebar" is on). Through
+# ingress, so it needs no published port and Home Assistant's own login protects it; the page
+# answers only the Supervisor's ingress gateway and only admins see the panel.
+ingress: true
+panel_icon: mdi:shield-home
+panel_title: Wazuh Agent
+
 # --- Options ----------------------------------------------------------------
 options:
   # Connection
@@ -156,6 +164,7 @@ options:
   debug_level: 0
   log_max_size_mb: 10
   use_custom_ossec_conf: false
+  ui_update_check: true
 
 schema:
   manager_address: str
@@ -278,3 +287,4 @@ schema:
   debug_level: int(0,2)
   log_max_size_mb: int(1,512)
   use_custom_ossec_conf: bool
+  ui_update_check: bool
