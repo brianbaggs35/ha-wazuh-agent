@@ -97,8 +97,8 @@ func TestRunReportsAServerFailure(t *testing.T) {
 	restore := listen
 	defer func() { listen = restore }()
 	listen = func(network, address string) (net.Listener, error) {
-		real, err := net.Listen(network, address)
-		return brokenListener{real}, err
+		inner, err := net.Listen(network, address)
+		return brokenListener{inner}, err
 	}
 
 	var logs bytes.Buffer

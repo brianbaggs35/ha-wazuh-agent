@@ -91,6 +91,7 @@ describe('LogPanel', () => {
       await wrapper.setProps({ lines: [...lines, 'a new line'] })
       wrapper.unmount()
       await flushPromises()
+      expect(wrapper.exists()).toBe(false)
     })
   })
 

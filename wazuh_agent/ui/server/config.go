@@ -9,7 +9,7 @@ import (
 // Defaults match the paths the app's init step and service use inside the container.
 const (
 	defaultListen    = ":8099"
-	defaultAllow     = "172.30.32.2"
+	defaultAllow     = "172.30.32.2" // NOSONAR: the Supervisor's ingress gateway, a fixed address Home Assistant documents
 	defaultPublicDir = "/run/wazuh-ha/public"
 	defaultStaticDir = "/usr/share/wazuh-ha-ui"
 )

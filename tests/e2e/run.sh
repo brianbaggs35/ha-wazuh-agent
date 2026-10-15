@@ -509,6 +509,7 @@ scenario_crash() {
         && fail "no start lock error after a crash" || pass "no start lock error after a crash"
     assert "all agent daemons run after the crash" bash -c \
         "[[ \$(docker exec ${c} /var/ossec/bin/wazuh-control status | grep -c 'is running') -eq 5 ]]"
+    return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -594,6 +595,7 @@ scenario_capabilities() {
     [[ -z "$(manager_agent_line e2e-cap-none)" ]] && ! docker exec "${none}" wazuh-ha-healthcheck > /dev/null 2>&1 \
         && pass "with no capabilities at all the agent cannot run (so the list above is needed)" \
         || fail "with no capabilities at all the agent cannot run (so the list above is needed)"
+    return 0
 }
 
 # ---------------------------------------------------------------------------

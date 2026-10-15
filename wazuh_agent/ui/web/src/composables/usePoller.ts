@@ -16,8 +16,8 @@ export function usePoller<T>(fetcher: () => Promise<T>, intervalMs: number) {
       data.value = await fetcher()
       error.value = null
       fetchedAt.value = new Date()
-    } catch (caught) {
-      error.value = caught instanceof Error ? caught : new Error(String(caught))
+    } catch (error_) {
+      error.value = error_ instanceof Error ? error_ : new Error(String(error_))
     }
     if (running) timer = setTimeout(tick, intervalMs)
   }
