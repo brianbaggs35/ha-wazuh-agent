@@ -66,9 +66,14 @@ publish_file() {
 # agent keeps for itself, who it is registered as (the ID and name from client.keys, never the key),
 # and the tail of its log.
 publish() {
-    local id="" name=""
+    local id="" name="" state="${OSSEC}/var/run/wazuh-agentd.state"
     printf '%s\n' "${status_text}" | publish_file daemons.txt
-    cat "${OSSEC}/var/run/wazuh-agentd.state" 2> /dev/null | publish_file agentd.state
+    # Before the agent has written its state there is nothing to show: publish an empty file.
+    if [[ -r "${state}" ]]; then
+        publish_file agentd.state < "${state}"
+    else
+        publish_file agentd.state < /dev/null
+    fi
     read -r id name _ < "${OSSEC}/etc/client.keys" 2> /dev/null || true
     jq -cn --arg id "${id}" --arg name "${name}" '{id: $id, name: $name}' | publish_file identity.json
     tail -n 300 "${OSSEC}/logs/ossec.log" 2> /dev/null | publish_file log.txt
