@@ -1,0 +1,203 @@
+#!/usr/bin/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# One-shot initialisation, run by s6 before the agent starts:
+#   1. put the agent's files on the persistent /data volume (and refresh the
+#      program files after an app update without touching the agent's identity)
+#   2. render ossec.conf from the app options
+#   3. write the enrollment password to the file Wazuh reads it from
+#   4. have Wazuh check the configuration before anything is started
+# ==============================================================================
+set -euo pipefail
+
+readonly DIST="/var/ossec.dist"   # pristine package contents, part of the image
+readonly LIVE="/data/ossec"       # the agent's real home; /var/ossec points here
+readonly OPTIONS="${OPTIONS_FILE:-/data/options.json}"
+readonly CONFIG_DIR="${APP_CONFIG_DIR:-/config}"
+readonly RUNTIME="/run/wazuh-ha"
+
+# What belongs to this installation and must survive an app update.
+readonly KEEP_TOP_LEVEL=(etc queue logs var tmp .ssh VERSION.json)
+readonly KEEP_IN_ETC=(client.keys ossec.conf local_internal_options.conf authd.pass shared)
+
+install_agent_files() {
+    if [[ ! -e "${LIVE}/VERSION.json" ]]; then
+        bashio::log.info "First start: installing the Wazuh agent files into persistent storage."
+        rm -rf "${LIVE}.partial"
+        cp -a "${DIST}" "${LIVE}.partial"
+        # Atomic: a power cut mid-copy must not leave a half-installed agent that
+        # looks complete to the next start.
+        rm -rf "${LIVE}"
+        mv "${LIVE}.partial" "${LIVE}"
+        return
+    fi
+
+    if cmp -s "${DIST}/VERSION.json" "${LIVE}/VERSION.json"; then
+        return
+    fi
+
+    bashio::log.info "Updating the Wazuh agent program files to the version in this app release."
+    local entry name
+    for entry in "${DIST}"/* "${DIST}"/.[!.]*; do
+        [[ -e "${entry}" ]] || continue
+        name="$(basename "${entry}")"
+        if printf '%s\n' "${KEEP_TOP_LEVEL[@]}" | grep -qxF "${name}"; then
+            continue
+        fi
+        rm -rf "${LIVE:?}/${name}"
+        cp -a "${entry}" "${LIVE}/${name}"
+    done
+
+    # etc/: refresh what ships with the package, keep this agent's own state.
+    for entry in "${DIST}/etc"/*; do
+        name="$(basename "${entry}")"
+        if printf '%s\n' "${KEEP_IN_ETC[@]}" | grep -qxF "${name}"; then
+            continue
+        fi
+        rm -rf "${LIVE:?}/etc/${name}"
+        cp -a "${entry}" "${LIVE}/etc/${name}"
+    done
+
+    # New versions can add directories to the state trees; add what is missing
+    # without overwriting anything that exists.
+    local tree
+    for tree in queue var; do
+        cp -a --update=none "${DIST}/${tree}/." "${LIVE}/${tree}/"
+    done
+
+    # Last, so an interrupted update is retried on the next start.
+    cp -a "${DIST}/VERSION.json" "${LIVE}/VERSION.json"
+}
+
+fix_ownership() {
+    # The wazuh account has fixed IDs (see the Dockerfile), but if they ever did
+    # change, repair the persisted files instead of leaving the agent unable to
+    # read its own state.
+    local want_uid want_gid have_uid have_gid
+    want_uid="$(id -u wazuh)"
+    want_gid="$(getent group wazuh | cut -d: -f3)"
+    have_uid="$(stat -c %u "${LIVE}/queue")"
+    have_gid="$(stat -c %g "${LIVE}/queue")"
+    if [[ "${have_uid}" != "${want_uid}" || "${have_gid}" != "${want_gid}" ]]; then
+        bashio::log.warning "Repairing file ownership in ${LIVE} (was ${have_uid}:${have_gid}, now ${want_uid}:${want_gid})."
+        find "${LIVE}" -xdev -uid "${have_uid}" -exec chown -h "${want_uid}" {} +
+        find "${LIVE}" -xdev -gid "${have_gid}" -exec chgrp -h "${want_gid}" {} +
+    fi
+}
+
+# Facts the templates need that only exist at runtime.
+write_runtime_info() {
+    local supervisor_info='{}' app_info='{}' journal=false
+    if [[ -n "${SUPERVISOR_TOKEN:-}" ]]; then
+        supervisor_info="$(curl -fsS --max-time 10 -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+            http://supervisor/info 2> /dev/null | jq -c '.data // {}' 2> /dev/null)" || supervisor_info='{}'
+        app_info="$(curl -fsS --max-time 10 -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+            http://supervisor/addons/self/info 2> /dev/null | jq -c '.data // {}' 2> /dev/null)" || app_info='{}'
+    else
+        bashio::log.notice "No Supervisor API token: running outside Home Assistant, host labels disabled."
+    fi
+    if find /var/log/journal /run/log/journal -name '*.journal' -print -quit 2> /dev/null | grep -q .; then
+        journal=true
+    fi
+    jq -n --argjson s "${supervisor_info}" --argjson a "${app_info}" --argjson j "${journal}" \
+        '$s + {app_version: ($a.version // null), journal_available: $j}' > "${RUNTIME}/info.json"
+}
+
+main() {
+    mkdir -p "${RUNTIME}"
+    [[ -r "${OPTIONS}" ]] || bashio::exit.nok "Cannot read the app options at ${OPTIONS}."
+
+    install_agent_files
+    fix_ownership
+
+    # The files the agent reads are generated here, never edited by hand.
+    # Re-enrolment: removing the key makes the agent enroll again on this start.
+    if [[ "$(jq -r '.force_reenroll // false' "${OPTIONS}")" == "true" ]]; then
+        bashio::log.warning "force_reenroll is on: discarding the saved agent key; the agent will enroll again."
+        bashio::log.warning "Turn force_reenroll off once the agent shows as active in Wazuh, or it will re-enroll on every start."
+        rm -f "${LIVE}/etc/client.keys"
+        : > "${LIVE}/etc/client.keys"
+    fi
+
+    write_runtime_info
+
+    local render_args=(--options "${OPTIONS}" --info "${RUNTIME}/info.json" --outdir "${RUNTIME}/rendered")
+    local use_custom=false
+    if [[ "$(jq -r '.use_custom_ossec_conf // false' "${OPTIONS}")" == "true" ]]; then
+        use_custom=true
+        render_args+=(--skip-ossec)
+    fi
+
+    local rc=0
+    wazuh-ha-render "${render_args[@]}" || rc=$?
+    if [[ "${rc}" -eq 2 ]]; then
+        bashio::exit.nok "Fix the problems listed above in the app's Configuration tab, then start the app again."
+    elif [[ "${rc}" -ne 0 ]]; then
+        bashio::exit.nok "Could not generate the Wazuh configuration (renderer exit status ${rc})."
+    fi
+
+    if [[ "${use_custom}" == "true" ]]; then
+        [[ -r "${CONFIG_DIR}/ossec.conf" ]] \
+            || bashio::exit.nok "use_custom_ossec_conf is on but ${CONFIG_DIR}/ossec.conf does not exist."
+        bashio::log.warning "Using ${CONFIG_DIR}/ossec.conf verbatim; the connection options in this app are ignored."
+        cp -f "${CONFIG_DIR}/ossec.conf" "${RUNTIME}/rendered/ossec.conf"
+    elif [[ -r "${CONFIG_DIR}/ossec_extra.conf" ]]; then
+        bashio::log.info "Appending ${CONFIG_DIR}/ossec_extra.conf to the generated configuration."
+        { printf '\n'; cat "${CONFIG_DIR}/ossec_extra.conf"; } >> "${RUNTIME}/rendered/ossec.conf"
+    fi
+
+    if [[ -r "${CONFIG_DIR}/local_internal_options_extra.conf" ]]; then
+        bashio::log.info "Appending ${CONFIG_DIR}/local_internal_options_extra.conf."
+        { printf '\n'; cat "${CONFIG_DIR}/local_internal_options_extra.conf"; } \
+            >> "${RUNTIME}/rendered/local_internal_options.conf"
+    fi
+
+    install -o root -g wazuh -m 0660 "${RUNTIME}/rendered/ossec.conf" "${LIVE}/etc/ossec.conf"
+    install -o root -g wazuh -m 0640 "${RUNTIME}/rendered/local_internal_options.conf" \
+        "${LIVE}/etc/local_internal_options.conf"
+    rm -rf "${RUNTIME}/rendered"
+
+    # Time zone for the agent's timestamps (the daemons run chrooted in /var/ossec).
+    if [[ -e /etc/localtime ]]; then
+        cp -fL /etc/localtime "${LIVE}/etc/localtime"
+    fi
+
+    # Enrollment password: straight into the file Wazuh reads it from. It is
+    # never placed in ossec.conf, on a command line, or in the log.
+    local password
+    password="$(jq -r '.enrollment_password // ""' "${OPTIONS}")"
+    if [[ -n "${password}" ]]; then
+        (umask 0137 && printf '%s\n' "${password}" > "${LIVE}/etc/authd.pass")
+        chown root:wazuh "${LIVE}/etc/authd.pass"
+        chmod 0640 "${LIVE}/etc/authd.pass"
+    else
+        rm -f "${LIVE}/etc/authd.pass"
+    fi
+    unset password
+
+    # Warn early about files the configuration points at but cannot be read.
+    local path
+    while IFS= read -r path; do
+        [[ -z "${path}" ]] && continue
+        [[ -r "${path}" ]] || bashio::log.warning "Configured path is not readable: ${path}"
+    done < <(jq -r '[.enrollment_ca_path, .enrollment_certificate_path, .enrollment_key_path] | .[] | select(. != null)' "${OPTIONS}")
+
+    # Let Wazuh itself have the last word on whether the configuration is valid.
+    # Each daemon only checks its own sections, so ask all of them. An error stops
+    # the start; warnings (for example an element this Wazuh version does not know)
+    # are shown but do not.
+    local daemon output line
+    for daemon in wazuh-agentd wazuh-execd wazuh-logcollector wazuh-modulesd wazuh-syscheckd; do
+        if ! output="$("${LIVE}/bin/${daemon}" -t 2>&1)"; then
+            printf '%s\n' "${output}" >&2
+            bashio::exit.nok "Wazuh rejected the generated configuration (${daemon}); see the lines above."
+        fi
+        while IFS= read -r line; do
+            bashio::log.warning "${line}"
+        done < <(grep -E ' (WARNING|ERROR):' <<< "${output}" || true)
+    done
+
+    bashio::log.info "Wazuh agent $(sed -n 's/^WAZUH_VERSION="\(.*\)"$/\1/p' "${LIVE}/VERSION.json") configured; starting."
+}
+
+main "$@"

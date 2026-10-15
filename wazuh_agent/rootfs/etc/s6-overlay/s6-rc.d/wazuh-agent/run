@@ -1,0 +1,96 @@
+#!/usr/bin/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Runs the Wazuh agent and keeps it honest:
+#   * starts the daemons with wazuh-control (they daemonise themselves),
+#   * streams the agent log to the app log so it shows in Home Assistant,
+#   * restarts the whole agent if a daemon that was running dies,
+#   * keeps the agent's own log files from growing without bound,
+#   * stops the daemons cleanly on shutdown so their databases are flushed.
+# ==============================================================================
+set -uo pipefail
+
+readonly OSSEC="/var/ossec"
+readonly CONTROL="${OSSEC}/bin/wazuh-control"
+readonly OPTIONS="${OPTIONS_FILE:-/data/options.json}"
+readonly LOGS=("${OSSEC}/logs/ossec.log" "${OSSEC}/logs/active-responses.log")
+
+max_mb="$(jq -r '.log_max_size_mb // 10' "${OPTIONS}" 2> /dev/null || echo 10)"
+readonly MAX_LOG_BYTES=$((max_mb * 1024 * 1024))
+
+tail_pid=""
+
+stop_agent() {
+    "${CONTROL}" stop > /dev/null 2>&1 || true
+}
+
+shutdown() {
+    bashio::log.info "Stopping the Wazuh agent."
+    [[ -n "${tail_pid}" ]] && kill "${tail_pid}" 2> /dev/null
+    stop_agent
+    exit 0
+}
+trap shutdown TERM INT
+
+# Wazuh does not rotate the agent's logs; keep one previous copy of each.
+rotate_logs() {
+    local file size
+    for file in "${LOGS[@]}"; do
+        [[ -f "${file}" ]] || continue
+        size="$(stat -c %s "${file}" 2> /dev/null || echo 0)"
+        if ((size > MAX_LOG_BYTES)); then
+            cp -f "${file}" "${file}.1" && : > "${file}"
+        fi
+    done
+}
+
+running_daemons() {
+    "${CONTROL}" status 2> /dev/null | awk '/ is running/ {print $1}'
+}
+
+fail() {
+    bashio::log.error "$1"
+    tail -n 20 "${OSSEC}/logs/ossec.log" 2> /dev/null
+    stop_agent
+    # Slow down s6's restart loop if the problem is persistent (bad manager address, ...).
+    sleep 30 &
+    wait $!
+    exit 1
+}
+
+# A fresh log per start; the previous run's log is kept as .1
+[[ -f "${OSSEC}/logs/ossec.log" ]] && mv -f "${OSSEC}/logs/ossec.log" "${OSSEC}/logs/ossec.log.1"
+
+bashio::log.info "Starting the Wazuh agent daemons."
+"${CONTROL}" start || fail "wazuh-control could not start the agent."
+
+tail -n +1 -F "${OSSEC}/logs/ossec.log" 2> /dev/null &
+tail_pid=$!
+
+# Give the daemons time to settle, then remember which ones came up: modules the
+# user switched off legitimately exit, and must not count as failures.
+sleep 10 &
+wait $!
+mapfile -t expected < <(running_daemons)
+if ! printf '%s\n' "${expected[@]}" | grep -qx 'wazuh-agentd'; then
+    fail "wazuh-agentd did not stay up. The agent log above says why (commonly: wrong manager address, or enrollment refused)."
+fi
+bashio::log.info "Wazuh agent running: ${expected[*]}"
+
+ticks=0
+while true; do
+    sleep 5 &
+    wait $!
+
+    mapfile -t now < <(running_daemons)
+    for daemon in "${expected[@]}"; do
+        if ! printf '%s\n' "${now[@]}" | grep -qx "${daemon}"; then
+            fail "${daemon} stopped unexpectedly; restarting the agent."
+        fi
+    done
+
+    ticks=$((ticks + 1))
+    if ((ticks % 120 == 0)); then
+        rotate_logs
+    fi
+done

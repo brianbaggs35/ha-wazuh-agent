@@ -1,0 +1,5 @@
+#!/bin/sh
+# Safety net: whichever way the service ended, make sure no agent daemon is left
+# running unsupervised. wazuh-control stop is a no-op when they are already down.
+/var/ossec/bin/wazuh-control stop > /dev/null 2>&1 || true
+exit 0

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Container health: the agent daemon is running and connected to the manager.
+# "starting" is reported through Docker's start-period, so by the time this
+# runs a missing connection is a real problem (manager down, wrong address,
+# enrollment refused) and shows up as "unhealthy" rather than as a silent stall.
+set -u
+
+OSSEC=/var/ossec
+state="${OSSEC}/var/run/wazuh-agentd.state"
+
+if ! pgrep -f 'bin/wazuh-agentd' > /dev/null 2>&1; then
+    echo "wazuh-agentd is not running"
+    exit 1
+fi
+
+if [[ ! -r "${state}" ]]; then
+    echo "wazuh-agentd has not written its state file yet"
+    exit 1
+fi
+
+status="$(sed -n "s/^status='\(.*\)'$/\1/p" "${state}" | head -n 1)"
+if [[ "${status}" != "connected" ]]; then
+    echo "agent status: ${status:-unknown}"
+    exit 1
+fi
+
+echo "connected"
