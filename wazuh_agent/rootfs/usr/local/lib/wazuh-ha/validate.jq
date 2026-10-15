@@ -18,14 +18,17 @@ $o[0] as $o
   # Anything that is written into ossec.conf must be free of characters the
   # Wazuh XML reader cannot represent. The enrollment password goes to a file,
   # not into XML, so only newlines matter there.
-  [ paths(type == "string") as $p
+  [ ($o | paths(type == "string")) as $p
     | ($o | getpath($p)) as $v
-    | ($p | map(tostring) | join(".")) as $name
+    | ($p | reduce .[] as $c ("";
+        if ($c | type) == "number" then . + "[\($c)]"
+        elif . == "" then $c
+        else . + "." + $c end)) as $name
     | if $p[0] == "enrollment_password" then
-        (if ($v | test("[\\n\\r\\u0000]")) then "\($name): must not contain a line break" else empty end)
+        (if ($v | test("[\\n\\r]") or contains("\u0000")) then "\($name): must not contain a line break" else empty end)
       else
         (if ($v | test("<")) then "\($name): the character \"<\" is not supported (Wazuh does not decode XML entities); use the extra configuration file instead"
-         elif ($v | test("[\\n\\r\\u0000]")) then "\($name): must be a single line"
+         elif ($v | test("[\\n\\r]") or contains("\u0000")) then "\($name): must be a single line"
          elif ($v | trailing_backslash) then "\($name): must not end with a single backslash"
          else empty end)
       end

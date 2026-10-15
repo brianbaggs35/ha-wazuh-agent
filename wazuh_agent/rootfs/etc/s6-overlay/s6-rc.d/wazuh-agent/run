@@ -77,6 +77,12 @@ if ! printf '%s\n' "${expected[@]}" | grep -qx 'wazuh-agentd'; then
 fi
 bashio::log.info "Wazuh agent running: ${expected[*]}"
 
+# Wazuh restarts its own daemons now and then (for example the first time the manager
+# sends the group configuration), and that takes a few seconds. Only a daemon that
+# stays missing for several checks in a row counts as having died.
+readonly MISSING_LIMIT=5
+declare -A missing=()
+
 ticks=0
 while true; do
     sleep 5 &
@@ -84,8 +90,13 @@ while true; do
 
     mapfile -t now < <(running_daemons)
     for daemon in "${expected[@]}"; do
-        if ! printf '%s\n' "${now[@]}" | grep -qx "${daemon}"; then
-            fail "${daemon} stopped unexpectedly; restarting the agent."
+        if printf '%s\n' "${now[@]}" | grep -qx "${daemon}"; then
+            missing["${daemon}"]=0
+        else
+            missing["${daemon}"]=$((${missing["${daemon}"]:-0} + 1))
+            if ((missing["${daemon}"] >= MISSING_LIMIT)); then
+                fail "${daemon} stopped and did not come back; restarting the agent."
+            fi
         fi
     done
 

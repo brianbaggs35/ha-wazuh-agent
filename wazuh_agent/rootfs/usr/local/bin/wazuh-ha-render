@@ -51,15 +51,14 @@ if [[ -n "${errors}" ]]; then
     exit 2
 fi
 
-# 2. Build the template context. It never contains the enrollment password.
+# 2. Build the render context. It never contains the enrollment password.
 workdir="$(mktemp -d)"
 trap 'rm -rf "${workdir}"' EXIT
 jq -n --slurpfile o "${options}" --slurpfile i "${info}" -f "${LIB}/ctx.jq" > "${workdir}/ctx.json"
 
-# 3. Render.
+# 3. Render. Plain jq: the image carries no templating binary.
 mkdir -p "${outdir}"
 if [[ "${skip_ossec}" -eq 0 ]]; then
-    tempio -conf "${workdir}/ctx.json" -template "${LIB}/ossec.conf.gtpl" -out "${outdir}/ossec.conf"
+    jq -r -f "${LIB}/ossec.conf.jq" "${workdir}/ctx.json" > "${outdir}/ossec.conf"
 fi
-tempio -conf "${workdir}/ctx.json" -template "${LIB}/local_internal_options.conf.gtpl" \
-    -out "${outdir}/local_internal_options.conf"
+jq -r -f "${LIB}/local_internal_options.jq" "${workdir}/ctx.json" > "${outdir}/local_internal_options.conf"

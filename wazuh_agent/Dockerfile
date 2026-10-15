@@ -2,7 +2,7 @@
 #
 # Debian (not Alpine) on purpose: Wazuh publishes its agent as a glibc .deb
 # (amd64 and arm64) and does not support musl. The Home Assistant Debian base
-# image brings s6-overlay, bashio and tempio, so the app plugs into the
+# image brings s6-overlay and bashio, so the app plugs into the
 # Supervisor like any other app.
 #
 # Pinned by digest (multi-arch index: linux/amd64 + linux/arm64). Dependabot
@@ -62,7 +62,11 @@ RUN set -eux; \
     # bind mount because the daemons chroot() into /var/ossec and an app
     # container has no CAP_SYS_ADMIN to mount anything.
     mv /var/ossec /var/ossec.dist; \
-    ln -s /data/ossec /var/ossec
+    ln -s /data/ossec /var/ossec; \
+    # The base image's tempio (a Go templating tool) is not used: the configuration is
+    # rendered with jq. Removing it keeps the image to what the agent needs, and drops a
+    # binary that was built with an older Go toolchain than the vulnerability scans accept.
+    rm -f /usr/bin/tempio
 
 COPY rootfs /
 
