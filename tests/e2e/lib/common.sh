@@ -4,6 +4,10 @@
 # The tests run the app image against a real Wazuh manager (the official
 # wazuh/wazuh-manager image), so what they prove is what a user gets: the agent
 # enrolls, stays connected, keeps its identity, and its data reaches the manager.
+#
+# Style: every function names its arguments and ends with an explicit `return`
+# (a bare `return` passes on the status of the last command), which is what the
+# SonarQube shell rules ask for.
 
 E2E_ID="${E2E_ID:-$$}"
 E2E_NET="e2e-net-${E2E_ID}"
@@ -16,19 +20,42 @@ E2E_VOLUMES=()
 PASSED=0
 FAILED=0
 
-log() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
-info() { printf '    %s\n' "$*"; }
-pass() { PASSED=$((PASSED + 1)); printf '    \033[32mPASS\033[0m %s\n' "$*"; }
-fail() { FAILED=$((FAILED + 1)); printf '    \033[31mFAIL\033[0m %s\n' "$*"; }
+log() {
+    printf '\n\033[1m==> %s\033[0m\n' "$*"
+    return 0
+}
+info() {
+    printf '    %s\n' "$*"
+    return 0
+}
+pass() {
+    PASSED=$((PASSED + 1))
+    printf '    \033[32mPASS\033[0m %s\n' "$*"
+    return 0
+}
+fail() {
+    FAILED=$((FAILED + 1))
+    printf '    \033[31mFAIL\033[0m %s\n' "$*"
+    return 0
+}
 
-track_container() { E2E_CONTAINERS+=("$1"); }
-track_volume() { E2E_VOLUMES+=("$1"); }
+track_container() {
+    local name="$1"
+    E2E_CONTAINERS+=("${name}")
+    return 0
+}
+track_volume() {
+    local name="$1"
+    E2E_VOLUMES+=("${name}")
+    return 0
+}
 
 cleanup() {
     local c v
     for c in "${E2E_CONTAINERS[@]}"; do docker rm -f "${c}" > /dev/null 2>&1 || true; done
     for v in "${E2E_VOLUMES[@]}"; do docker volume rm -f "${v}" > /dev/null 2>&1 || true; done
     docker network rm "${E2E_NET}" > /dev/null 2>&1 || true
+    return 0
 }
 
 # wait_for SECONDS DESCRIPTION COMMAND...   (polls every 2s)
@@ -47,75 +74,130 @@ wait_for() {
     return 0
 }
 
-assert() { # assert DESCRIPTION COMMAND...
+# assert DESCRIPTION COMMAND...
+assert() {
     local desc="$1"
     shift
     if "$@" > /dev/null 2>&1; then pass "${desc}"; else fail "${desc}"; fi
+    return 0
 }
 
 # ---- Wazuh manager ---------------------------------------------------------
+
+manager_ports_listening() {
+    # 1514 (remoted) and 1515 (authd) listening: 0x05EA / 0x05EB in /proc/net/tcp.
+    docker exec "${MANAGER}" bash -c "grep -qi ':05EA ' /proc/net/tcp && grep -qi ':05EB ' /proc/net/tcp"
+    return
+}
 
 manager_start() {
     docker network create "${E2E_NET}" > /dev/null 2>&1 || true
     docker run -d --name "${MANAGER}" --hostname "${MANAGER}" --network "${E2E_NET}" \
         "wazuh/wazuh-manager:${MANAGER_VERSION}" > /dev/null
     track_container "${MANAGER}"
-    # 1514 (remoted) and 1515 (authd) listening: 0x05EA / 0x05EB in /proc/net/tcp.
-    wait_for 180 "manager listening on 1514 and 1515" docker exec "${MANAGER}" bash -c \
-        "grep -qi ':05EA ' /proc/net/tcp && grep -qi ':05EB ' /proc/net/tcp"
+    wait_for 180 "manager listening on 1514 and 1515" manager_ports_listening
     # Keep every event, not only the ones that match a rule, so tests can see them.
     docker exec "${MANAGER}" bash -c "
         sed -i 's#<logall_json>no</logall_json>#<logall_json>yes</logall_json>#' /var/ossec/etc/ossec.conf
         /var/ossec/bin/wazuh-control restart > /dev/null 2>&1"
-    wait_for 120 "manager restarted" docker exec "${MANAGER}" bash -c \
-        "grep -qi ':05EA ' /proc/net/tcp && grep -qi ':05EB ' /proc/net/tcp"
+    wait_for 120 "manager restarted" manager_ports_listening
+    return
 }
 
-manager_agent_line() { # NAME -> the agent_control line for that agent
-    docker exec "${MANAGER}" /var/ossec/bin/agent_control -l 2> /dev/null | grep "Name: $1," || true
+# manager_agent_line NAME -> the agent_control line for that agent
+manager_agent_line() {
+    local name="$1"
+    docker exec "${MANAGER}" /var/ossec/bin/agent_control -l 2> /dev/null | grep "Name: ${name}," || true
+    return 0
 }
-manager_agent_active() { manager_agent_line "$1" | grep -q 'Active'; }
-manager_agent_id() { manager_agent_line "$1" | sed -n 's/.*ID: \([0-9]*\),.*/\1/p'; }
-manager_agent_count() { docker exec "${MANAGER}" /var/ossec/bin/agent_control -l 2> /dev/null | grep -c 'ID: 0[0-9]*, Name: ' || true; }
 
-manager_archive_count() { # FIXED-STRING -> number of archived events containing it
-    docker exec "${MANAGER}" bash -c "grep -cF -- '$1' /var/ossec/logs/archives/archives.json 2> /dev/null || true"
+manager_agent_active() {
+    local name="$1"
+    manager_agent_line "${name}" | grep -q 'Active'
+    return
 }
-manager_alert_count() { # FIXED-STRING
-    docker exec "${MANAGER}" bash -c "grep -cF -- '$1' /var/ossec/logs/alerts/alerts.json 2> /dev/null || true"
+
+manager_agent_id() {
+    local name="$1"
+    manager_agent_line "${name}" | sed -n 's/.*ID: \([0-9]*\),.*/\1/p'
+    return 0
+}
+
+manager_agent_count() {
+    docker exec "${MANAGER}" /var/ossec/bin/agent_control -l 2> /dev/null | grep -c 'ID: 0[0-9]*, Name: ' || true
+    return 0
+}
+
+# manager_archive_count FIXED-STRING -> number of archived events containing it
+manager_archive_count() {
+    local text="$1"
+    docker exec "${MANAGER}" bash -c "grep -cF -- '${text}' /var/ossec/logs/archives/archives.json 2> /dev/null || true"
+    return 0
+}
+
+# manager_alert_count FIXED-STRING
+manager_alert_count() {
+    local text="$1"
+    docker exec "${MANAGER}" bash -c "grep -cF -- '${text}' /var/ossec/logs/alerts/alerts.json 2> /dev/null || true"
+    return 0
 }
 
 # Predicates for wait_for (it runs a command, so these are plain functions).
-manager_has_archive() { [[ "$(manager_archive_count "$1")" -ge 1 ]]; }
-manager_has_alert_path() { [[ "$(manager_alert_count "\"path\":\"$1\"")" -ge 1 ]]; }
-manager_has_alert_rule() { # FIXED-STRING RULE-ID: an alert mentioning the string, raised by that rule
-    docker exec "${MANAGER}" bash -c \
-        "grep -F -- '$1' /var/ossec/logs/alerts/alerts.json | grep -qF '\"id\":\"$2\"'"
+manager_has_archive() {
+    local text="$1"
+    [[ "$(manager_archive_count "${text}")" -ge 1 ]]
+    return
 }
-container_healthy() { [[ "$(docker inspect -f '{{.State.Health.Status}}' "$1" 2> /dev/null)" == healthy ]]; }
+
+manager_has_alert_path() {
+    local path="$1"
+    [[ "$(manager_alert_count "\"path\":\"${path}\"")" -ge 1 ]]
+    return
+}
+
+# manager_has_alert_rule FIXED-STRING RULE-ID: an alert mentioning the string, raised by that rule
+manager_has_alert_rule() {
+    local text="$1" rule="$2"
+    docker exec "${MANAGER}" bash -c \
+        "grep -F -- '${text}' /var/ossec/logs/alerts/alerts.json | grep -qF '\"id\":\"${rule}\"'"
+    return
+}
+
+container_healthy() {
+    local name="$1"
+    [[ "$(docker inspect -f '{{.State.Health.Status}}' "${name}" 2> /dev/null)" == healthy ]]
+    return
+}
+
 # The log is captured before it is searched. Piping `docker logs` into `grep -q` under
 # pipefail turns a successful match into a failure: grep exits at the first match, docker
 # gets SIGPIPE, and the pipeline reports 141. That would also make "must NOT contain" checks
 # pass for the wrong reason.
 container_log_has() {
-    local logs
-    logs="$(docker logs "$1" 2>&1)"
-    grep -qF -- "$2" <<< "${logs}"
+    local name="$1" text="$2" logs
+    logs="$(docker logs "${name}" 2>&1)"
+    grep -qF -- "${text}" <<< "${logs}"
+    return
 }
-container_log_matches() { # CONTAINER EXTENDED-REGEX (case-insensitive)
-    local logs
-    logs="$(docker logs "$1" 2>&1)"
-    grep -qiE -- "$2" <<< "${logs}"
+
+# container_log_matches CONTAINER EXTENDED-REGEX (case-insensitive)
+container_log_matches() {
+    local name="$1" pattern="$2" logs
+    logs="$(docker logs "${name}" 2>&1)"
+    grep -qiE -- "${pattern}" <<< "${logs}"
+    return
 }
 
 # ---- The app under test ----------------------------------------------------
 
 # write_options VOLUME JSON   puts /data/options.json into the app's data volume
 write_options() {
-    docker volume create "$1" > /dev/null
-    track_volume "$1"
-    printf '%s' "$2" | docker run --rm -i -v "$1:/data" --entrypoint bash "${IMAGE}" \
+    local volume="$1" json="$2"
+    docker volume create "${volume}" > /dev/null
+    track_volume "${volume}"
+    printf '%s' "${json}" | docker run --rm -i -v "${volume}:/data" --entrypoint bash "${IMAGE}" \
         -c 'cat > /data/options.json'
+    return
 }
 
 # agent_start NAME VOLUME [extra docker run args...]
@@ -125,6 +207,7 @@ agent_start() {
     docker rm -f "${name}" > /dev/null 2>&1 || true
     docker run -d --name "${name}" --network "${E2E_NET}" -v "${volume}:/data" "$@" "${IMAGE}" > /dev/null
     track_container "${name}"
+    return 0
 }
 
 # agent_settle CONTAINER
@@ -138,17 +221,25 @@ agent_settle() {
     sleep 12
     wait_for 120 "agent connected again after the reload" docker exec "${c}" wazuh-ha-healthcheck
     sleep 5
+    return 0
 }
 
-agent_log() { docker logs "$1" 2>&1; }
-agent_exec() { local c="$1"; shift; docker exec "${c}" "$@"; }
+agent_log() {
+    local name="$1"
+    docker logs "${name}" 2>&1
+    return
+}
 
-dump_agent() { # NAME  (diagnostics on failure)
-    info "---- last 40 lines of $1 ----"
-    docker logs --tail 40 "$1" 2>&1 | sed 's/^/    | /'
+# dump_agent NAME  (diagnostics on failure)
+dump_agent() {
+    local name="$1"
+    info "---- last 40 lines of ${name} ----"
+    docker logs --tail 40 "${name}" 2>&1 | sed 's/^/    | /'
+    return 0
 }
 
 summary() {
     printf '\n\033[1m%s passed, %s failed\033[0m\n' "${PASSED}" "${FAILED}"
     [[ "${FAILED}" -eq 0 ]]
+    return
 }

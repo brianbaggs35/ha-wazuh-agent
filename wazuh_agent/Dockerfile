@@ -28,20 +28,19 @@ ARG TARGETARCH
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Fixed IDs for the account the agent daemons drop to. The agent's state lives
-# on the app's persistent /data volume and survives image updates, so these
-# numbers must not depend on what the package installer happens to pick: a
-# different ID after a rebuild would leave the persisted files unreadable.
-# (The package re-uses the account if it already exists.)
-RUN groupadd --system --gid 1450 wazuh \
-    && useradd --system --uid 1450 --gid wazuh --home-dir /var/ossec \
-        --shell /sbin/nologin --no-create-home wazuh
-
 # hadolint ignore=DL3008
 RUN set -eux; \
+    # Fixed IDs for the account the agent daemons drop to. The agent's state lives on the app's
+    # persistent /data volume and survives image updates, so these numbers must not depend on
+    # what the package installer happens to pick: a different ID after a rebuild would leave the
+    # persisted files unreadable. (The package re-uses the account if it already exists.)
+    groupadd --system --gid 1450 wazuh; \
+    useradd --system --uid 1450 --gid wazuh --home-dir /var/ossec \
+        --shell /sbin/nologin --no-create-home wazuh; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl gnupg; \
-    curl -fsSL --retry 3 https://packages.wazuh.com/key/GPG-KEY-WAZUH -o /tmp/wazuh.key; \
+    # HTTPS only, even across redirects.
+    curl -fsSL --proto '=https' --tlsv1.2 --retry 3 https://packages.wazuh.com/key/GPG-KEY-WAZUH -o /tmp/wazuh.key; \
     fingerprint="$(gpg --show-keys --with-colons /tmp/wazuh.key | awk -F: '/^fpr:/ {print $10; exit}')"; \
     if [ "${fingerprint}" != "${WAZUH_GPG_FINGERPRINT}" ]; then \
         echo "Wazuh signing key fingerprint mismatch: got ${fingerprint}, expected ${WAZUH_GPG_FINGERPRINT}" >&2; \
@@ -56,16 +55,15 @@ RUN set -eux; \
     apt-mark manual curl ca-certificates jq procps; \
     apt-get purge -y --auto-remove gnupg; \
     rm -rf /var/lib/apt/lists/* /tmp/wazuh.key /root/.gnupg; \
-    # The agent was installed by the package at /var/ossec. Keep that pristine
-    # copy aside: at start-up it is copied to /data/ossec (the app's persistent
-    # volume) and /var/ossec becomes a symlink to it. A symlink rather than a
-    # bind mount because the daemons chroot() into /var/ossec and an app
-    # container has no CAP_SYS_ADMIN to mount anything.
+    # The agent was installed by the package at /var/ossec. Keep that pristine copy aside: at
+    # start-up it is copied to /data/ossec (the app's persistent volume) and /var/ossec becomes a
+    # symlink to it. A symlink rather than a bind mount because the daemons chroot() into
+    # /var/ossec and an app container has no CAP_SYS_ADMIN to mount anything.
     mv /var/ossec /var/ossec.dist; \
     ln -s /data/ossec /var/ossec; \
-    # The base image's tempio (a Go templating tool) is not used: the configuration is
-    # rendered with jq. Removing it keeps the image to what the agent needs, and drops a
-    # binary that was built with an older Go toolchain than the vulnerability scans accept.
+    # The base image's tempio (a Go templating tool) is not used: the configuration is rendered
+    # with jq. Removing it keeps the image to what the agent needs, and drops a binary that was
+    # built with an older Go toolchain than the vulnerability scans accept.
     rm -f /usr/bin/tempio
 
 COPY rootfs /

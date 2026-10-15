@@ -19,12 +19,21 @@ trap 'rm -rf "${WORK}"' EXIT
 
 PASSED=0
 FAILED=0
-pass() { PASSED=$((PASSED + 1)); printf '  \033[32mPASS\033[0m %s\n' "$*"; }
-fail() { FAILED=$((FAILED + 1)); printf '  \033[31mFAIL\033[0m %s\n' "$*"; }
+pass() {
+    PASSED=$((PASSED + 1))
+    printf '  \033[32mPASS\033[0m %s\n' "$*"
+    return 0
+}
+fail() {
+    FAILED=$((FAILED + 1))
+    printf '  \033[31mFAIL\033[0m %s\n' "$*"
+    return 0
+}
 
 # render NAME -> splits the container's output into ${WORK}/NAME/{rc,stderr,ossec,lio,daemons}
 render() {
-    local name="$1" info="info.json" dir="${WORK}/$1"
+    local name="$1" info="info.json" dir
+    dir="${WORK}/${name}"
     [[ -f "${FIXTURES}/options/${name}.info.json" ]] && info="options/${name}.info.json"
     mkdir -p "${dir}"
     docker run --rm --entrypoint bash \
@@ -38,10 +47,12 @@ render() {
         /^@@@DAEMONS$/{ out = d "/daemons"; next }
         out           { print > out }' "${dir}/raw"
     touch "${dir}/stderr" "${dir}/ossec" "${dir}/lio" "${dir}/daemons"
+    return 0
 }
 
 check_expectations() { # NAME FILE-TO-SEARCH
-    local name="$1" file="$2" expect="${FIXTURES}/options/$1.expect" kind text
+    local name="$1" file="$2" expect kind text
+    expect="${FIXTURES}/options/${name}.expect"
     [[ -f "${expect}" ]] || return 0
     while IFS= read -r line; do
         kind="${line%%: *}"
@@ -49,14 +60,19 @@ check_expectations() { # NAME FILE-TO-SEARCH
         case "${kind}" in
             has) grep -qF -- "${text}" "${file}" && pass "${name}: has ${text}" || fail "${name}: expected ${text}" ;;
             no) grep -qF -- "${text}" "${file}" && fail "${name}: must not contain ${text}" || pass "${name}: no ${text}" ;;
+            *) fail "${name}: unknown expectation '${kind}' in ${expect} (use has: or no:)" ;;
         esac
     done < "${expect}"
+    return 0
 }
 
 printf '\n\033[1m==> render tests against %s\033[0m\n' "${IMAGE}"
 
 for fixture in "${FIXTURES}"/options/ok-*.json; do
-    case "${fixture}" in *.info.json) continue ;; esac
+    case "${fixture}" in
+        *.info.json) continue ;;
+        *) ;;
+    esac
     name="$(basename "${fixture}" .json)"
     printf '\n\033[1m%s\033[0m\n' "${name}"
     render "${name}"

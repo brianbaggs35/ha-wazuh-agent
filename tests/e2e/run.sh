@@ -241,6 +241,7 @@ bad_label|{"manager_address": "m", "agent_labels": [{"key": "bad key", "value": 
 cert_without_key|{"manager_address": "m", "enrollment_certificate_path": "/x"}|must be set together
 bad_interval|{"manager_address": "m", "sca_interval": "soon"}|sca_interval
 CASES
+    return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -438,6 +439,7 @@ main() {
         "scenario_${s}"
     done
     summary
+    return
 }
 
 main "$@"
