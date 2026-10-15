@@ -49,12 +49,12 @@ def parse_packages(text: str) -> list[tuple[tuple[int, int, int], int]]:
     """Return (version, revision) for every wazuh-agent stanza in an apt Packages index."""
     found = []
     for stanza in text.split("\n\n"):
-        fields = {
-            key: value
-            for key, value in (
-                line.split(": ", 1) for line in stanza.splitlines() if ": " in line and not line.startswith(" ")
-            )
-        }
+        fields = {}
+        for line in stanza.splitlines():
+            # Continuation lines (leading space) and anything that is not "Key: value" are skipped.
+            if ": " in line and not line.startswith(" "):
+                key, value = line.split(": ", 1)
+                fields[key] = value
         if fields.get("Package") != "wazuh-agent":
             continue
         match = VERSION_RE.match(fields.get("Version", ""))
