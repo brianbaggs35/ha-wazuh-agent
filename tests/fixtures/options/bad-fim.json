@@ -1,0 +1,1 @@
+{"manager_address": "m", "fim_directories": [{"path": "relative/dir"}, {"path": "/a,b"}, {"path": "/ok", "restrict": "x\"y"}]}

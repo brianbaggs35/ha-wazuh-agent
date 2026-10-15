@@ -1,0 +1,1 @@
+{"manager_address": "m", "fim_ignore": ["a<b"], "log_files": [{"path": "/a", "ignore": "x\\"}]}

@@ -1,0 +1,5 @@
+# hadolint configuration (https://github.com/hadolint/hadolint)
+---
+failure-threshold: warning
+trustedRegistries:
+  - ghcr.io

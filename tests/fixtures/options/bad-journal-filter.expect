@@ -1,0 +1,2 @@
+has: journal_filters[0].field
+has: fim_sync_interval

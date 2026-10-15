@@ -1,0 +1,11 @@
+has: <address>wazuh.example.lan</address>
+has: <agent_name>homeassistant</agent_name>
+has: <config-profile>homeassistant</config-profile>
+has: <directories realtime="yes" report_changes="no" check_all="yes">/homeassistant</directories>
+has: <label key="ha_core_version">2026.10.1</label>
+has: <filter field="SYSLOG_IDENTIFIER">^homeassistant$</filter>
+has: <filter field="SYSLOG_IDENTIFIER">^hassio_supervisor$</filter>
+has: <filter field="_TRANSPORT">^kernel$</filter>
+no: <authorization_pass_path>
+no: <server_ca_path>
+no: ^addon_

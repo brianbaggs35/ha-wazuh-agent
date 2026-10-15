@@ -1,0 +1,15 @@
+---
+extends: default
+
+rules:
+  line-length:
+    max: 120
+    # Shell commands inside workflow `run:` blocks read better unwrapped; actionlint and
+    # shellcheck cover those files.
+    ignore: |
+      .github/workflows/*.yaml
+  truthy:
+    allowed-values: ["true", "false", "on", "off"]
+    check-keys: true
+  document-start:
+    present: true

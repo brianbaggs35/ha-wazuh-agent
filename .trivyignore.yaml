@@ -1,0 +1,17 @@
+---
+# Findings Trivy reports that are deliberate. CI passes this file with --ignorefile, so
+# every other HIGH or CRITICAL finding fails the build. Each entry must say why, and
+# vulnerability entries must carry an expiry date so they are looked at again.
+vulnerabilities: []
+misconfigurations:
+  - id: DS-0002
+    paths:
+      - Dockerfile
+    statement: >-
+      Home Assistant apps start as root: the s6-overlay init that the Home Assistant base
+      image uses cannot run otherwise, and the Wazuh daemons that read protected files (file
+      integrity, log collection, modules) need it. The one network-facing daemon,
+      wazuh-agentd, drops to the unprivileged "wazuh" account by itself. The container gets
+      no added capabilities, no host network, no ports, no full access, and Home Assistant's
+      protection mode and this app's AppArmor profile confine it. tests/config/check_config.py
+      fails if any of those privileges is ever requested.
