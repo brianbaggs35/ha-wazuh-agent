@@ -1,0 +1,19 @@
+---
+version: 2
+updates:
+  # Every GitHub Action is pinned to a commit SHA; Dependabot proposes the new SHA and
+  # keeps the version comment next to it up to date.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  # The Home Assistant base image is pinned by digest in the Dockerfile.
+  - package-ecosystem: docker
+    directory: /wazuh_agent
+    schedule:
+      interval: weekly
