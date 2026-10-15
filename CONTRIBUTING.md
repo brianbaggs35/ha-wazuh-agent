@@ -9,6 +9,8 @@ wazuh_agent/            the Home Assistant app (this is what the Supervisor sees
   apparmor.txt          the app's AppArmor profile
   translations/en.yaml  the text shown for every option in the UI
   DOCS.md README.md CHANGELOG.md
+  ui/server/            the status page's server (Go, standard library only)
+  ui/web/               the status page (Vue 3 + Vuetify, TypeScript)
   rootfs/               what is copied into the image
     etc/s6-overlay/s6-rc.d/   the init step and the agent service
     usr/local/lib/wazuh-ha/   jq programs: validation, render context, and the writers of ossec.conf
@@ -18,6 +20,7 @@ tests/
   render/    renders fixtures inside the image; every Wazuh daemon checks the result
   e2e/       the image against a real Wazuh manager
   scripts/   unit tests for scripts/wazuh_update.py
+scripts/ci/  coverage.sh: every language's unit tests, with a 100% floor
 scripts/     maintenance scripts
 .github/     CI, release and the weekly Wazuh version watch
 ```
@@ -30,8 +33,9 @@ You need Docker and Python 3 with PyYAML.
 # static checks (no Docker)
 python3 -I tests/config/check_config.py
 python3 -I -m unittest discover -s tests/scripts
-# coverage of the Python code, as the SonarQube scan in CI measures it
-python3 -m pip install coverage && coverage run -m unittest discover -s tests/scripts && coverage report
+# unit tests of every language (Python, Go, web) with the 100% coverage floor CI enforces;
+# needs Docker (Go and Node run in the pinned builder images) and coverage.py
+python3 -m pip install coverage && scripts/ci/coverage.sh
 
 # build the image once, then:
 docker build -t ha-wazuh-agent:test wazuh_agent
@@ -60,6 +64,7 @@ IMAGE=ha-wazuh-agent:test tests/e2e/run.sh enroll     # a single scenario
   rating from `config.yaml` and fails if it drops, or if the app starts asking for host network,
   ports, capabilities, full access, a host PID namespace or the Docker API. Changing that is a
   design decision: change `MINIMUM_RATING` in the same pull request and explain why.
+- **Coverage stays at 100%** for Python, Go and the web code (`scripts/ci/coverage.sh`).
 - **Every option has a translation and a default** that satisfies its own schema (checked).
 - **The renderer's built-in defaults equal `config.yaml`** (checked by the render tests).
 - **Values go into `ossec.conf` exactly as typed.** Wazuh's configuration reader does not decode
@@ -67,6 +72,21 @@ IMAGE=ha-wazuh-agent:test tests/e2e/run.sh enroll     # a single scenario
   Do not HTML-escape values in the renderer.
 - **A new feature needs a test that proves it works against a real manager**, not only that the
   generated configuration looks right.
+
+## Working on the status page
+
+```bash
+cd wazuh_agent/ui/web
+npm ci && npm run dev          # http://127.0.0.1:5173, proxying /api to WAZUH_UI_URL
+npm run coverage               # vitest; fails below 100%
+```
+
+The server is plain `go` (standard library only): `cd wazuh_agent/ui/server && go test -race ./...`
+(Go 1.26 or newer; the image builds with the version pinned in the Dockerfile).
+
+The page is read-only and unprivileged by design: the root-owned supervisor service in the app
+publishes a few non-secret files, and the server only reads them. Keep it that way: no write
+endpoints, and nothing the page serves may contain the agent key (an end-to-end test checks).
 
 ## Releasing
 

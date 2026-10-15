@@ -33,6 +33,8 @@ is the app's [documentation](wazuh_agent/DOCS.md).
   ever sending the content of secrets.
 - Reports **inventory** and runs **rootkit checks**; optional configuration assessment.
 - Labels every event with the Home Assistant OS, Core and Supervisor versions.
+- A read-only **Wazuh Agent** status page in the Home Assistant sidebar: running or stopped,
+  connected or not, registration, update availability, a connection test and the agent log.
 
 ## Designed to be safe to run
 
@@ -55,6 +57,7 @@ is released. See the [changelog](wazuh_agent/CHANGELOG.md).
 | --- | --- |
 | Base image | Home Assistant's Debian (trixie) base, pinned by digest. |
 | Agent | Installed from Wazuh's official apt repository; the build fails if the repository's signing key differs from the pinned fingerprint. |
+| Coverage | 100% of lines and branches for the Python, Go and web code, enforced in CI (`scripts/ci/coverage.sh`). Shell and jq cannot be measured by those tools; the render and end-to-end tests cover them. |
 | Tests | Render tests (every Wazuh daemon checks the generated configuration) and end-to-end tests against the official `wazuh-manager` image: enrollment, persistence across restarts and updates, journal collection and filtering, file integrity, registration passwords, re-enrollment. |
 | Architectures | `amd64` and `aarch64`, each built and tested on a native runner. |
 | Scans | Trivy on the image (vulnerabilities, a gate on fixable HIGH and CRITICAL), configuration and secrets, plus an SBOM per release; SonarQube Cloud analysis of the code with its quality gate. |
@@ -62,8 +65,13 @@ is released. See the [changelog](wazuh_agent/CHANGELOG.md).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) to run the tests yourself.
 
-## Licence
+## Licence and trademarks
 
 The code in this repository is [MIT licensed](LICENSE). The image bundles the Wazuh agent, which
 is licensed under the GNU GPL v2 by Wazuh, Inc., and the Home Assistant base image; their licences
 apply to those parts.
+
+Wazuh is a trademark of Wazuh, Inc. This is an independent project, not affiliated with, endorsed by
+or sponsored by Wazuh, Inc. The icon and logo in this repository are original artwork: Wazuh's
+[trademark policy](https://wazuh.com/legal-resources/trademark-policy/) does not allow its logo in
+another product's own logo without a written licence.

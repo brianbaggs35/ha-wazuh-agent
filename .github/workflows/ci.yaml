@@ -4,6 +4,7 @@ name: CI
 # What runs, and why each part exists:
 #   lint          static checks: YAML, shell, Dockerfile, workflows, AppArmor syntax, the Home
 #                 Assistant app linter, and the config guard (options, translations, security rating)
+#   unit-tests    every language's unit tests (Python, Go, web) with a 100% coverage floor
 #   build         the image is built once; every later job tests exactly these bits
 #   render-tests  the configuration renderer, with every Wazuh daemon checking its output
 #   e2e           the image against a REAL Wazuh manager: enrollment, persistence, journal, file
@@ -52,8 +53,7 @@ jobs:
       - name: YAML
         run: |
           python3 -m venv "${RUNNER_TEMP}/venv"
-          "${RUNNER_TEMP}/venv/bin/pip" install --quiet "yamllint==1.38.0" "pyyaml==${PYYAML_VERSION}" \
-            "coverage==${COVERAGE_VERSION}"
+          "${RUNNER_TEMP}/venv/bin/pip" install --quiet "yamllint==1.38.0" "pyyaml==${PYYAML_VERSION}"
           "${RUNNER_TEMP}/venv/bin/yamllint" -c .yamllint --strict .
 
       - name: Shell scripts
@@ -64,7 +64,7 @@ jobs:
             wazuh_agent/rootfs/usr/local/bin/* \
             wazuh_agent/rootfs/etc/s6-overlay/s6-rc.d/*/run \
             wazuh_agent/rootfs/etc/s6-overlay/s6-rc.d/*/finish \
-            scripts/*.sh
+            scripts/*.sh scripts/ci/*.sh
 
       - name: Dockerfile
         run: |
@@ -86,16 +86,41 @@ jobs:
         run: |
           "${RUNNER_TEMP}/venv/bin/python" -I tests/config/check_config.py
 
-      # .coveragerc sets fail_under = 100 (lines and branches): the report fails below that.
-      - name: Unit tests with 100% coverage (version update script)
-        run: |
-          "${RUNNER_TEMP}/venv/bin/coverage" run -m unittest discover -s tests/scripts -v
-          "${RUNNER_TEMP}/venv/bin/coverage" report
-
       - name: Home Assistant app linter
         uses: frenck/action-app-linter@b9cfd1bc62ba60d2c4fc96317b5f7ada5923f4a7  # v2.21.1
         with:
           path: ./wazuh_agent
+
+  unit-tests:
+    name: Unit tests, 100% coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # One script for every language, so CI and a developer's machine run the same thing:
+      #   Python  scripts/                (lines and branches; floor in .coveragerc)
+      #   Go      wazuh_agent/ui/server   (statements, with the race detector)
+      #   web     wazuh_agent/ui/web      (statements, branches, functions, lines; floor in vite.config.ts)
+      # plus lint, formatting and type checks for the web code. Any language below 100% fails here.
+      - name: Run the unit tests of every language
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/venv"
+          "${RUNNER_TEMP}/venv/bin/pip" install --quiet "coverage==${COVERAGE_VERSION}"
+          PYTHON="${RUNNER_TEMP}/venv/bin/python" scripts/ci/coverage.sh
+
+      - name: Upload the coverage reports
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: coverage-reports
+          path: |
+            coverage.xml
+            coverage-go/coverage.out
+            wazuh_agent/ui/web/coverage/lcov.info
+          retention-days: 7
 
   build:
     name: Build image (amd64)
@@ -305,6 +330,21 @@ jobs:
           exit-code: "1"
           skip-setup-trivy: true
 
+      # The status page's dependencies (npm lockfile, Go module): fixable HIGH and CRITICAL fail.
+      - name: Dependency scan (npm and Go lockfiles)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: fs
+          scan-ref: wazuh_agent/ui
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          trivyignores: .trivyignore.yaml
+          format: table
+          exit-code: "1"
+          skip-setup-trivy: true
+
       - name: Secret scan (repository)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
@@ -335,6 +375,7 @@ jobs:
 
   sonarqube:
     name: SonarQube Cloud scan
+    needs: unit-tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # A pull request from a fork cannot read repository secrets (SONAR_TOKEN), so the scan would fail
@@ -353,13 +394,18 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Python coverage report
+      - name: Get the coverage reports
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: coverage-reports
+          path: .
+
+      # The TypeScript analysis needs the web project's packages installed to resolve its tsconfig.
+      - name: Install the web dependencies (analysis only)
         run: |
-          python3 -m venv "${RUNNER_TEMP}/venv"
-          "${RUNNER_TEMP}/venv/bin/pip" install --quiet "coverage==${COVERAGE_VERSION}"
-          "${RUNNER_TEMP}/venv/bin/coverage" run -m unittest discover -s tests/scripts
-          "${RUNNER_TEMP}/venv/bin/coverage" report
-          "${RUNNER_TEMP}/venv/bin/coverage" xml -o coverage.xml
+          node_image="$(sed -n 's/^FROM \(node:[^ ]*\) AS ui-web$/\1/p' wazuh_agent/Dockerfile)"
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "${PWD}/wazuh_agent/ui/web:/w" -w /w \
+            "${node_image}" npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Project version
         id: version
@@ -389,7 +435,7 @@ jobs:
   ci-ok:
     name: CI passed
     if: always()
-    needs: [lint, build, render-tests, e2e, e2e-arm64, trivy, sonarqube]
+    needs: [lint, unit-tests, build, render-tests, e2e, e2e-arm64, trivy, sonarqube]
     runs-on: ubuntu-latest
     steps:
       - name: Check results
