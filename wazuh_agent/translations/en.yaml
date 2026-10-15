@@ -39,7 +39,7 @@ configuration:
   config_profile:
     name: Configuration profile
     description: >-
-      Profile name(s) the manager can target with &lt;agent_config profile="..."&gt; in agent.conf.
+      Profile name(s) the manager can target with `<agent_config profile="...">` in agent.conf.
       The default "homeassistant" lets you push settings to all Home Assistant agents.
   buffer_enabled:
     name: Event buffer

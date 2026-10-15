@@ -104,7 +104,7 @@ adopt_host_machine_id() {
     fi
 }
 
-# Facts the templates need that only exist at runtime.
+# Facts the renderer needs that only exist at runtime.
 write_runtime_info() {
     local supervisor_info='{}' app_info='{}' journal=false
     if [[ -n "${SUPERVISOR_TOKEN:-}" ]]; then
@@ -134,8 +134,9 @@ main() {
     if [[ "$(jq -r '.force_reenroll // false' "${OPTIONS}")" == "true" ]]; then
         bashio::log.warning "force_reenroll is on: discarding the saved agent key; the agent will enroll again."
         bashio::log.warning "Turn force_reenroll off once the agent shows as active in Wazuh, or it will re-enroll on every start."
+        # Recreate it empty with the ownership and mode the package gives it (not the umask default).
         rm -f "${LIVE}/etc/client.keys"
-        : > "${LIVE}/etc/client.keys"
+        install -o root -g wazuh -m 0640 /dev/null "${LIVE}/etc/client.keys"
     fi
 
     adopt_host_machine_id

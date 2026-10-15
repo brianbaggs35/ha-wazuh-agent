@@ -67,8 +67,8 @@ for fixture in "${FIXTURES}"/options/ok-*.json; do
         continue
     fi
     pass "${name}: rendered"
-    # Template slips that would only show up as odd XML.
-    grep -qE '<no value>|\{\{|\}\}' "${dir}/ossec" "${dir}/lio" && fail "${name}: unresolved template text" || pass "${name}: no unresolved template text"
+    # A missing value would surface as a literal null (jq prints it) in the output.
+    grep -qE '>null<|="null"|=null$' "${dir}/ossec" "${dir}/lio" && fail "${name}: a null leaked into the output" || pass "${name}: no null values in the output"
     # Every daemon accepted it and had no complaints.
     if grep -E 'rc=[1-9]|complaint:' "${dir}/daemons" > "${dir}/problems"; then
         fail "${name}: Wazuh objected to the generated configuration"

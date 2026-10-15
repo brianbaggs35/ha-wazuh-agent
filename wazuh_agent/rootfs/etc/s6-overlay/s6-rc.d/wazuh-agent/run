@@ -51,6 +51,8 @@ running_daemons() {
 fail() {
     bashio::log.error "$1"
     tail -n 20 "${OSSEC}/logs/ossec.log" 2> /dev/null
+    # s6 restarts this service when it exits; do not leave the log follower behind.
+    [[ -n "${tail_pid}" ]] && kill "${tail_pid}" 2> /dev/null
     stop_agent
     # Slow down s6's restart loop if the problem is persistent (bad manager address, ...).
     sleep 30 &

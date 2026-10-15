@@ -5,7 +5,7 @@ This app runs the [Wazuh](https://wazuh.com) agent on Home Assistant OS and enro
 other endpoints: its alerts, inventory and file integrity events appear in the Wazuh
 dashboard under **Agents**.
 
-> **Status: experimental.** It is tested end to end against real Wazuh managers in CI
+> **Status: experimental.** The project's tests run the app against real Wazuh managers
 > (enrollment, restarts, journal collection, file integrity, registration passwords). It
 > has not yet been verified on real Home Assistant OS hardware, hence the label.
 
@@ -253,9 +253,9 @@ labelled variant that requires disabling protection mode.
 Updating the Wazuh agent means a **new version of this app**: the agent is part of the
 image and is never replaced while the app runs. Home Assistant shows the update in the
 normal way (and you can enable automatic updates). Each release's changelog says which
-Wazuh agent version it contains. A scheduled job in the project's repository opens a
-change as soon as Wazuh publishes a new stable agent; it is tested against a real manager
-and scanned before it is released.
+Wazuh agent version it contains. A scheduled job in the project's repository checks
+weekly and opens a change when Wazuh has published a new stable agent; it is tested against
+a real manager and scanned before it is released.
 
 **Update your Wazuh manager first** when an update moves to a newer Wazuh minor version
 (for example 4.14 to 4.15), because the manager must not be older than the agent.
