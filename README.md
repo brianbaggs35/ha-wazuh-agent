@@ -15,9 +15,10 @@ its address, operating system, processes, files and logs, not those of a contain
 
 > **Testing.** The test suite runs the app against real Wazuh managers and a stand-in for the Home
 > Assistant OS device (enrollment, persistence, journal, file integrity, and that what the manager
-> records is the device's, not the container's), and CI runs it on amd64 and natively on arm64. Home
-> Assistant itself (the Supervisor, its handling of Protection mode, AppArmor enforcement, ingress) is
-> not part of the automated tests.
+> records is the device's, not the container's), and CI runs it on amd64 and natively on arm64. The
+> app's AppArmor profile is loaded into the runner's kernel and the agent runs under it. Home
+> Assistant itself (the Supervisor, its handling of Protection mode, how it installs the profile,
+> ingress) is not part of the automated tests.
 
 [![Add this repository to your Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fbrianbaggs35%2Fha-wazuh-agent)
 
