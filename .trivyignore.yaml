@@ -8,10 +8,12 @@ misconfigurations:
     paths:
       - Dockerfile
     statement: >-
-      Home Assistant apps start as root: the s6-overlay init that the Home Assistant base
-      image uses cannot run otherwise, and the Wazuh daemons that read protected files (file
-      integrity, log collection, modules) need it. The one network-facing daemon,
-      wazuh-agentd, drops to the unprivileged "wazuh" account by itself. The container gets
-      no added capabilities, no host network, no ports, no full access, and Home Assistant's
-      protection mode and this app's AppArmor profile confine it. tests/config/check_config.py
-      fails if any of those privileges is ever requested.
+      Home Assistant apps start as root, and this one has to: it is the Wazuh agent of the Home
+      Assistant OS device, runs its daemons that read protected files (file integrity, log
+      collection, modules) inside the device's file system, and for that asks Home Assistant for
+      the device's process namespace, network and host name and the SYS_PTRACE and SYS_ADMIN
+      capabilities (the Security section of DOCS.md says what each is for, and why the Supervisor's
+      security rating is therefore low). The one network-facing daemon, wazuh-agentd, drops to the
+      unprivileged "wazuh" account by itself. No full access, no Docker API and no published
+      ports are requested, and this app's AppArmor profile confines it. tests/config/check_config.py
+      fails if anything beyond that reviewed list is ever requested.

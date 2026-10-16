@@ -59,14 +59,16 @@ host_start() {
 # host_agent_start NAME DATA-VOLUME HOST [docker run options...]
 # The app, started the way Home Assistant starts it with host_network, host_pid, host_uts and the
 # SYS_ADMIN and SYS_PTRACE capabilities, and Protection mode off: in the stand-in's network, in the
-# host's process namespace, under Docker's init.
+# host's process namespace, under Docker's init, with seccomp off (the Supervisor turns it off for
+# every app).
 host_agent_start() {
     local name="$1" volume="$2" host="$3" pid
     shift 3
     pid="$(docker inspect -f '{{.State.Pid}}' "${host}")"
     docker rm -f "${name}" > /dev/null 2>&1 || true
     docker run -d --init --name "${name}" --network "container:${host}" --pid=host \
-        --cap-add SYS_ADMIN --cap-add SYS_PTRACE -e "WAZUH_HA_HOST_PID=${pid}" -e WAZUH_UI_ALLOW=0.0.0.0/0 \
+        --cap-add SYS_ADMIN --cap-add SYS_PTRACE --security-opt seccomp=unconfined \
+        -e "WAZUH_HA_HOST_PID=${pid}" -e WAZUH_UI_ALLOW=0.0.0.0/0 \
         -v "${volume}:/data" "$@" "${IMAGE}" > /dev/null
     track_container "${name}"
     return 0
@@ -136,5 +138,21 @@ check_different() {
     else
         fail "${description} (got '${actual}', which must be set and differ from '${other}')"
     fi
+    return 0
+}
+
+# apparmor_available -> succeeds when AppArmor is enforced on this machine and profiles can be loaded
+# (GitHub's Ubuntu runners; not a development machine whose kernel has it switched off).
+apparmor_available() {
+    [[ "$(cat /sys/module/apparmor/parameters/enabled 2> /dev/null)" == Y ]] \
+        && command -v apparmor_parser > /dev/null && sudo -n true 2> /dev/null
+    return
+}
+
+# apparmor_denials PROFILE -> how many lines of the kernel log say the profile denied something
+apparmor_denials() {
+    local profile="$1" log
+    log="$(sudo -n dmesg 2> /dev/null)"
+    grep -c "apparmor=\"DENIED\".*profile=\"${profile}\"" <<< "${log}" || true
     return 0
 }

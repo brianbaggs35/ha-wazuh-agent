@@ -4,7 +4,9 @@
 #   IMAGE=ha-wazuh-agent:test tests/e2e/run.sh [scenario ...]
 #
 # Scenarios: validation enroll journal fim config supervisor ui capabilities upgrade crash duplicate reenroll password
-#            host host_cpu host_control host_unavailable   (default: all)
+#            host host_cpu host_control host_unavailable host_apparmor   (default: all)
+#   host_apparmor loads the app's AppArmor profile and so only runs where AppArmor is enforced and
+#   sudo is available (GitHub's runners); anywhere else it says so and is skipped.
 #   The first group runs the agent in a plain container (monitor_host off). The host group runs it as
 #   it runs in Home Assistant, against a stand-in for the Home Assistant OS device (see lib/host.sh).
 # Environment: IMAGE (image under test), MANAGER_VERSION (default 4.14.9),
@@ -853,9 +855,75 @@ CASES
 }
 
 # ---------------------------------------------------------------------------
+# The app's AppArmor profile is enforced on Home Assistant OS, and cannot be on a development machine
+# whose kernel has AppArmor off, so this runs where it can be (GitHub's runners): the profile is loaded
+# and the agent runs against the stand-in device under it, as the Supervisor would run it.
+scenario_host_apparmor() {
+    log "host_apparmor: with the app's AppArmor profile enforced, the agent works and nothing it needs is denied"
+    if ! apparmor_available; then
+        info "AppArmor is not enforced here (or sudo is missing): skipped"
+        return 0
+    fi
+    local profile_file="${HERE}/../../wazuh_agent/apparmor.txt" profile=wazuh_agent
+    local vol="e2e-haa-data-${E2E_ID}" cfg="e2e-haa-cfg-${E2E_ID}" ssl="e2e-haa-ssl-${E2E_ID}"
+    local h="e2e-haa-${E2E_ID}" c="e2e-haa-agent-${E2E_ID}" name="e2e-haa-agent"
+    track_volume "${cfg}"
+    track_volume "${ssl}"
+    docker volume create "${cfg}" > /dev/null
+    docker volume create "${ssl}" > /dev/null
+    if sudo -n apparmor_parser -r "${profile_file}"; then
+        pass "the profile loads into the kernel"
+    else
+        fail "the profile loads into the kernel"
+        return 0
+    fi
+    write_options "${vol}" "{\"monitor_host\": true, \"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", ${FAST}}"
+    host_start "${h}" "${vol}" -v "${cfg}:/mnt/data/supervisor/homeassistant" -v "${ssl}:/mnt/data/supervisor/ssl" \
+        || { fail "the stand-in host started"; return 0; }
+    local before after control
+    before="$(apparmor_denials "${profile}")"
+    host_agent_start "${c}" "${vol}" "${h}" --security-opt "apparmor=${profile}" -v "${cfg}:/homeassistant:ro" -v "${ssl}:/ssl:ro"
+
+    if wait_for 180 "agent active" manager_agent_active "${name}"; then
+        pass "the agent enrolls and is Active with the profile enforced"
+    else
+        fail "the agent enrolls and is Active with the profile enforced"
+        dump_agent "${c}"
+        sudo -n dmesg 2> /dev/null | grep "apparmor=\"DENIED\".*profile=\"${profile}\"" | tail -8 | sed 's/^/    | /'
+        sudo -n apparmor_parser -R "${profile_file}" || true
+        return 0
+    fi
+    host_settle "${c}"
+    local id
+    id="$(manager_agent_id "${name}")"
+    check_equal "the inventory is the host's under the profile" \
+        "$(manager_item "/syscollector/${id}/os" '.os.name')" "${HOST_OS_NAME}"
+    docker exec "${h}" bash -c 'echo "X11Forwarding yes" >> /etc/ssh/sshd_config'
+    wait_for 90 "FIM alert" manager_has_alert_path /etc/ssh/sshd_config \
+        && pass "file integrity of the host's files works under the profile" \
+        || fail "file integrity of the host's files works under the profile"
+    assert "the agent is connected after Wazuh's restart, which the app did under the profile" \
+        docker exec "${c}" wazuh-ha-healthcheck
+
+    # The kernel log, before and after: every denial of this profile is a line in it.
+    after="$(apparmor_denials "${profile}")"
+    check_equal "the profile denied nothing the agent needed" "$((after - before))" 0
+    # The control: a signal to a process that is not the app's own is what the profile refuses, and the
+    # kernel log must show it, or the zero above would mean nothing.
+    docker exec "${c}" bash -c 'kill -0 1' > /dev/null 2>&1 || true
+    sleep 2
+    control="$(apparmor_denials "${profile}")"
+    [[ "${control}" -gt "${after}" ]] \
+        && pass "(control) a signal the profile forbids is denied and logged" \
+        || fail "(control) a signal the profile forbids is denied and logged"
+    sudo -n apparmor_parser -R "${profile_file}" > /dev/null 2>&1 || true
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 main() {
     local scenarios=("$@")
-    [[ ${#scenarios[@]} -gt 0 ]] || scenarios=(validation enroll journal fim config supervisor ui capabilities upgrade crash duplicate reenroll password host host_cpu host_control host_unavailable)
+    [[ ${#scenarios[@]} -gt 0 ]] || scenarios=(validation enroll journal fim config supervisor ui capabilities upgrade crash duplicate reenroll password host host_cpu host_control host_unavailable host_apparmor)
 
     log "image under test: ${IMAGE}   manager: wazuh-manager ${MANAGER_VERSION}"
     # Validation needs no manager; everything else does.
