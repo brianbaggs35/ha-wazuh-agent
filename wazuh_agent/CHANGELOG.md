@@ -93,7 +93,8 @@ Wazuh agent **4.14.9**.
   The Python packages of apps are not.
 - Wazuh's Docker listener needs Python on the monitored machine, and Home Assistant OS has none.
 - The automated tests use a stand-in for the device, not Home Assistant itself: the Supervisor, its
-  Protection mode handling and AppArmor enforcement are not part of them.
+  Protection mode handling, the way it installs the AppArmor profile and ingress are not part of them.
+  The profile itself is loaded into the kernel of the test machines, and the agent runs under it.
 
 ## [1.0.2] - 2026-10-15
 

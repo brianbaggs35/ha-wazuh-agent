@@ -13,8 +13,9 @@ inventory and file integrity events appear in the Wazuh dashboard under **Agents
 
 > **Testing.** The project's tests run the app against real Wazuh managers and a stand-in for the
 > Home Assistant OS device (enrollment, restarts, journal collection, file integrity, what the
-> manager records about the host, registration passwords). Home Assistant itself (the Supervisor, its
-> handling of Protection mode, AppArmor enforcement, ingress) is not part of the automated tests.
+> manager records about the host, registration passwords), with the app's AppArmor profile loaded
+> into the test machine's kernel. Home Assistant itself (the Supervisor, its handling of Protection
+> mode, how it installs the profile, ingress) is not part of the automated tests.
 
 Bundled agent: **Wazuh 4.14.9** (see the changelog for the version in each release).
 
@@ -337,7 +338,7 @@ Home Assistant OS is a read-only image with no package manager, so the agent can
 it. Instead the app starts the agent's daemons from its own data folder (which the device sees
 under `/mnt/data/supervisor/addons/data/...`), inside a **private copy of the device's mount
 namespace**. In it, every path is the device's own, exactly as for an agent installed there. The
-private copy has two things laid over the device's files, and only the agent sees them:
+private copy has three things laid over the device's files, and only the agent sees them:
 
 - the device's account files with one more line each, for the `wazuh` account every Wazuh package
   creates (the agent drops to it), and

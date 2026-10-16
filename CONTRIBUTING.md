@@ -47,6 +47,7 @@ IMAGE=ha-wazuh-agent:test tests/host/run.sh          # about a minute
 IMAGE=ha-wazuh-agent:test tests/e2e/run.sh            # about 25 minutes; starts a real Wazuh manager
 IMAGE=ha-wazuh-agent:test tests/e2e/run.sh enroll     # a single scenario
 IMAGE=ha-wazuh-agent:test tests/e2e/run.sh host       # the agent against a stand-in for the device
+IMAGE=ha-wazuh-agent:test tests/e2e/run.sh host_apparmor  # the same under the app's AppArmor profile; needs sudo and an AppArmor kernel, skips itself otherwise
 ```
 
 `MANAGER_VERSION=4.14.8` runs the end-to-end tests against a different manager version.

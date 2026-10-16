@@ -202,7 +202,9 @@ jobs:
   e2e:
     name: E2E amd64 (manager ${{ matrix.manager }})
     needs: build
-    runs-on: ubuntu-latest
+    # Pinned, like the arm64 job: the host scenarios depend on the runner's kernel (AppArmor, mounts),
+    # and "ubuntu-latest" moves to the next Ubuntu on 2026-10-19. Move this on purpose, with the tests.
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
