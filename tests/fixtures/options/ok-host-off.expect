@@ -9,3 +9,4 @@ has: <users>no</users>
 has: <groups>no</groups>
 has: <services>no</services>
 has: <ignore>/mnt/data</ignore>
+has: <packages>no</packages>

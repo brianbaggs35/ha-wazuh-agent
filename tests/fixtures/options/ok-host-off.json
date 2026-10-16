@@ -1,1 +1,1 @@
-{"manager_address": "wazuh.example.lan", "fim_host_defaults": false, "inventory_host_details": false, "inventory_ports": true, "inventory_processes": true}
+{"manager_address": "wazuh.example.lan", "fim_host_defaults": false, "inventory_host_details": false, "inventory_core_packages": false, "inventory_ports": true, "inventory_processes": true}

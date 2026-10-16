@@ -10,3 +10,4 @@ has: <services>yes</services>
 has: <processes>yes</processes>
 has: <ignore>/mnt/data</ignore>
 no: <location>/homeassistant
+has: <packages>yes</packages>

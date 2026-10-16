@@ -1,0 +1,2 @@
+# The packages of the host itself are asked for, so they are inventoried, whatever is said about Core's.
+has: <packages>yes</packages>

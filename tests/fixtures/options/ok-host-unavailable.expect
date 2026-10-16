@@ -4,3 +4,4 @@ no: >/etc</directories>
 no: <ignore>/mnt/data</ignore>
 has: <users>no</users>
 has: <ports all="yes">yes</ports>
+has: <packages>no</packages>

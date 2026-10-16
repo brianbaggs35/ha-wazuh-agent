@@ -58,6 +58,12 @@ Wazuh agent **4.14.9**.
   The app now works out the name (for example `Cortex-A76 (Raspberry Pi 5 Model B Rev 1.0)`) from what
   the kernel does print, and shows it to the agent in a private copy of `/proc/cpuinfo`. The host
   itself is not changed: the copy is visible only to the agent.
+- **Home Assistant Core's Python packages are in the inventory** (new option
+  `inventory_core_packages`, on by default). Home Assistant OS has no package manager for Wazuh's
+  vulnerability detection to match, but Core is a Python application, and Python packages are
+  something Wazuh has advisories for. The agent finds Core through its processes and shows the
+  packages to Wazuh at the place Wazuh looks for a user's Python packages; the link is kept
+  current when Core restarts.
 - The status page shows where the agent runs (the device, or only the app's container), and a
   **Host access is needed** state that says what to do when it cannot start.
 - Tests: the end-to-end suite runs the app against a stand-in for the Home Assistant OS device and a
@@ -83,8 +89,8 @@ Wazuh agent **4.14.9**.
 - Wazuh's vulnerability detection matches an agent's installed packages with vendor and open-source
   advisories. Home Assistant OS has no package manager and is not one of the operating systems Wazuh
   has vulnerability content for, so it reports nothing about the OS's own software, whatever the
-  permissions. It does inventory the packages it finds in the standard places (dpkg, rpm, apk, Python
-  and npm locations) when `inventory_packages` is on.
+  permissions. What it can match is Python: the packages Home Assistant Core runs on are inventoried.
+  The Python packages of apps are not.
 - Wazuh's Docker listener needs Python on the monitored machine, and Home Assistant OS has none.
 - The automated tests use a stand-in for the device, not Home Assistant itself: the Supervisor, its
   Protection mode handling and AppArmor enforcement are not part of them.
