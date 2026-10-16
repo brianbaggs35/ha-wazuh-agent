@@ -1,6 +1,6 @@
 ---
 name: Wazuh Agent
-version: "1.0.2"
+version: "1.0.3"
 slug: wazuh_agent
 image: ghcr.io/brianbaggs35/wazuh_agent
 description: >-
@@ -11,19 +11,39 @@ url: https://github.com/brianbaggs35/ha-wazuh-agent
 arch:
   - aarch64
   - amd64
-init: false
+# The app supervises itself (wazuh-ha-entrypoint) and runs under Docker's own init, as an app that shares the host's
+# process namespace has to: Home Assistant's documentation says host_pid does not work with s6-overlay.
 # Stopping flushes the agent's databases; give it time.
 timeout: 30
 # The agent's databases must not be copied while they are being written.
 backup: cold
 
 # --- Privileges -------------------------------------------------------------
-# Deliberately minimal, to keep the Supervisor security rating at its maximum:
-# no host network, no published ports, no extra capabilities, no full access,
-# no host PID namespace, no Docker API, protection mode stays on. The agent only
-# makes outbound connections to the Wazuh manager.
+# This app is the Wazuh agent for the Home Assistant OS device itself: it monitors the host, as if the
+# agent had been installed on it, and not the container the app happens to run in. A container cannot see the
+# host, so the app asks for what reaching it takes, and the Supervisor rates it low for that reason: the
+# rating is low because the app is given a lot of access, on purpose.
 #
-# Supervisor info calls only (hostname, versions) for the agent name and labels. The role is
+#   host_pid        share the host's process namespace. Its processes become visible, and the agent can be
+#                   started inside the host's own file system (see wazuh-ha-host). Home Assistant applies
+#                   this only while the app's Protection mode is off, so the user turns that off once.
+#   host_network    the host's network: the agent reports the device's real address instead of the
+#                   container's, and the host's interfaces and listening ports.
+#   host_uts        the host's name instead of the container's.
+#   SYS_PTRACE      read the namespaces of host processes (the kernel refuses a process that holds more
+#                   privileges than this container, whatever its user).
+#   SYS_ADMIN       join the host's mount namespace and build the small private overlay the agent runs in.
+#
+# Still not asked for: full access, the Docker API, published ports, a Supervisor role above "default"
+# (info calls only, for the agent name and labels). tests/config/check_config.py fails if anything beyond
+# the list above is added, or if the rating changes without being looked at.
+host_network: true
+host_pid: true
+host_uts: true
+privileged:
+  - SYS_ADMIN
+  - SYS_PTRACE
+# Supervisor info calls only (hostname, versions, this app's protection mode and ingress port). The role is
 # left at its default ("default"): tests/config/check_config.py fails if it is ever raised.
 hassio_api: true
 # The host journal, read-only: SSH logins, kernel messages and the logs of Home
@@ -44,13 +64,20 @@ map:
 # --- The status page ------------------------------------------------------
 # A read-only "Wazuh Agent" panel in the sidebar (shown when "Show in sidebar" is on). Through
 # ingress, so it needs no published port and Home Assistant's own login protects it; the page
-# answers only the Supervisor's ingress gateway and only admins see the panel.
+# answers only the Supervisor's ingress gateway (and listens only on the Supervisor's own network
+# interface), and only admins see the panel.
 ingress: true
+# 0: the Supervisor picks a free port and tells the app. The app shares the host's network, where a fixed port
+# could already be taken by something else.
+ingress_port: 0
 panel_icon: mdi:shield-home
 panel_title: Wazuh Agent
 
 # --- Options ----------------------------------------------------------------
 options:
+  # Where the agent runs
+  monitor_host: true
+
   # Connection
   manager_address: ""
   manager_port: 1514
@@ -95,6 +122,7 @@ options:
 
   # File integrity monitoring
   fim_enabled: true
+  fim_host_defaults: true
   fim_frequency: 43200
   fim_scan_on_start: true
   fim_directories:
@@ -155,6 +183,7 @@ options:
   inventory_packages: false
   inventory_ports: false
   inventory_processes: false
+  inventory_host_details: true
 
   # Response and advanced
   active_response_enabled: false
@@ -165,6 +194,8 @@ options:
   ui_update_check: true
 
 schema:
+  monitor_host: bool
+
   manager_address: str
   manager_port: port
   manager_protocol: list(tcp|udp)
@@ -229,6 +260,7 @@ schema:
       alias: str?
 
   fim_enabled: bool
+  fim_host_defaults: bool
   fim_frequency: int(1,31536000)
   fim_scan_on_start: bool
   fim_directories:
@@ -279,6 +311,7 @@ schema:
   inventory_packages: bool
   inventory_ports: bool
   inventory_processes: bool
+  inventory_host_details: bool
 
   active_response_enabled: bool
   allow_remote_commands: bool

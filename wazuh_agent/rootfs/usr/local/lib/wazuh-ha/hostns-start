@@ -1,0 +1,68 @@
+#!/bin/sh
+# shellcheck shell=sh
+# Starts the Wazuh agent daemons inside a private copy of the Home Assistant OS host's mount
+# namespace. This is the one place where the agent stops looking at the app's container and starts
+# looking at the host: from here on /etc/os-release, /proc, the journal, /mnt/data and every other
+# path is the host's own, exactly as if the agent had been installed on the device.
+#
+# It is not run directly. wazuh-ha-host starts it like this, from the app container:
+#
+#   nsenter --target <host init> --mount -- BUSYBOX unshare --mount -- \
+#       BUSYBOX sh hostns-start BUSYBOX AGENT_HOME VIEW_DIR DAEMON...
+#
+# BUSYBOX is a static copy of busybox that the app keeps next to this script on its data volume, so
+# nothing here depends on what the host's own userland provides (Home Assistant OS has no
+# unshare, and only a trimmed busybox). `unshare` gave this script a mount namespace of its own;
+# what it mounts is visible to the daemons it starts and to nothing else on the host.
+set -eu
+
+busybox="$1"
+home="$2"
+view="$3"
+shift 3
+
+# The host's mounts are shared with the rest of the system (systemd makes / shared). Left like that,
+# the bind mounts below would show up in the real host namespace too. Cut the propagation first.
+"${busybox}" mount --make-rprivate /
+
+# The agent drops to a "wazuh" user and group, which every Wazuh package creates on install. There
+# is no such account on the host and its files are not ours to edit, so the host's account files
+# are laid over with copies that have the two extra lines.
+"${busybox}" mount --bind "${view}/passwd" /etc/passwd
+"${busybox}" mount --bind "${view}/group" /etc/group
+
+# ARM kernels do not name the CPU in /proc/cpuinfo, and Wazuh reads the name from there. When the
+# app has worked one out, show that copy instead.
+if [ -f "${view}/cpuinfo" ]; then
+    "${busybox}" mount --bind "${view}/cpuinfo" /proc/cpuinfo
+fi
+
+cd "${home}"
+
+# Start the daemons in the order given, as wazuh-control does, and wait for each to write its PID
+# file: the daemons put themselves in the background, so a quick exit status says nothing.
+for daemon in "$@"; do
+    echo "Starting ${daemon}..."
+    "./bin/${daemon}" || {
+        echo "${daemon} could not be started (exit status $?)"
+        exit 1
+    }
+    waited=0
+    started=0
+    while [ "${started}" -eq 0 ]; do
+        for pidfile in var/run/"${daemon}"-*.pid; do
+            if [ -e "${pidfile}" ] && kill -0 "$(cat "${pidfile}")" 2> /dev/null; then
+                started=1
+            fi
+        done
+        if [ "${started}" -eq 0 ]; then
+            waited=$((waited + 1))
+            if [ "${waited}" -ge 60 ]; then
+                echo "${daemon} did not start"
+                exit 1
+            fi
+            "${busybox}" sleep 1
+        fi
+    done
+    echo "Started ${daemon}..."
+done

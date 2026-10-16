@@ -39,6 +39,8 @@ $c[0] as $c
       remote_commands: ($c.options_file.remote_commands == 1)
     },
     host: {
+      # Where the agent runs: "host" is the Home Assistant OS device itself, "container" this app's own.
+      scope: ($i.host.mode // "container"),
       hostname: ($i.hostname // null),
       operating_system: ($i.operating_system // null),
       os_version: ($i.hassos // null),

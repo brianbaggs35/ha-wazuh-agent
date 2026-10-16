@@ -1,5 +1,15 @@
 ---
 configuration:
+  # ---- Where the agent runs -------------------------------------------------
+  monitor_host:
+    name: Monitor the Home Assistant OS host
+    description: >-
+      On (the default): the agent runs against the Home Assistant OS device itself, as if it had been
+      installed on it, and reports the device's address, operating system, processes, files and logs.
+      This needs the app's Protection mode turned off (Info tab). Off: the agent monitors only this
+      app's own container, the host journal and the Home Assistant folders mapped into it, and
+      Protection mode can stay on.
+
   # ---- Connection -----------------------------------------------------------
   manager_address:
     name: Wazuh manager address
@@ -166,11 +176,14 @@ configuration:
   ha_core_log_enabled:
     name: Read home-assistant.log
     description: >-
-      Also read /homeassistant/home-assistant.log. Core's log is already in the journal,
-      so only enable this if the journal is turned off.
+      Also read home-assistant.log in the Home Assistant configuration folder. Core's log is
+      already in the journal, so only enable this if the journal is turned off.
   log_files:
     name: Custom log files
-    description: Additional log files to read (for example /share/myapp.log).
+    description: >-
+      Additional log files to read (for example /share/myapp.log). Paths of the folders mapped into this
+      app (/homeassistant, /share, /media, /config and so on) are turned into the host's when monitoring
+      the host; any other path is the host's own (for example /var/log/messages).
     fields:
       path:
         name: Path
@@ -214,6 +227,13 @@ configuration:
   fim_enabled:
     name: File integrity monitoring
     description: Detect added, changed and deleted files in the directories below.
+  fim_host_defaults:
+    name: Monitor the host's system files
+    description: >-
+      Also watch what a Wazuh agent watches on any Linux machine (/etc, /usr/bin, /usr/sbin, /bin and
+      /sbin) plus the Home Assistant OS boot partition (/mnt/boot, where the SSH keys of the debug login
+      live), root's SSH keys (/root/.ssh) and your own apps (/mnt/data/supervisor/addons/local). Only
+      when monitoring the host. Your own directories below are added to these.
   fim_frequency:
     name: Full scan interval (seconds)
     description: How often a complete scan runs. Real-time directories are watched continuously in addition.
@@ -223,8 +243,9 @@ configuration:
   fim_directories:
     name: Monitored directories
     description: >-
-      Directories to watch. The Home Assistant configuration (/homeassistant) and
-      certificates (/ssl) are the paths this app can see.
+      Directories to watch. /homeassistant (the Home Assistant configuration) and /ssl
+      (certificates) are the folders mapped into this app; when monitoring the host they are turned into
+      their paths on it, and any other path (such as /etc/ssh) is the host's own.
     fields:
       path:
         name: Path
@@ -303,18 +324,23 @@ configuration:
     description: Look for anomalous permissions on system files.
   rootcheck_check_pids:
     name: Check for hidden processes
-    description: Compare the process table with what kill() reports. Off by default (only sees this app's processes).
+    description: >-
+      Compare the process table with what kill() reports. Off by default: on a device that runs many
+      containers it can raise false alarms. Meaningful when monitoring the host.
   rootcheck_check_ports:
     name: Check for hidden ports
-    description: Compare listening ports with what can be bound. Off by default (only sees this app's network).
+    description: >-
+      Compare listening ports with what can be bound. Off by default. Meaningful when monitoring the host,
+      whose network the app shares.
   rootcheck_check_if:
     name: Check network interfaces
     description: Look for interfaces in promiscuous mode.
   sca_enabled:
     name: Security configuration assessment
     description: >-
-      Run CIS-style policies. The built-in policy checks this app's Debian container,
-      not Home Assistant OS, so it is off by default. Enable it with your own policies below.
+      Run CIS-style policies. Wazuh's built-in policies are written for Debian, Ubuntu and similar systems,
+      not for Home Assistant OS, so it is off by default. Enable it with your own policies below; when
+      monitoring the host their checks run against the host.
   sca_scan_on_start:
     name: SCA - scan on start
     description: Run a scan when the agent starts.
@@ -326,12 +352,16 @@ configuration:
     description: Do not scan NFS and CIFS mounts.
   sca_policies:
     name: SCA - policy files
-    description: Paths of extra policy YAML files, for example /config/sca/home-assistant.yml.
+    description: >-
+      Paths of extra policy YAML files, for example /config/sca/home-assistant.yml (this app's
+      configuration folder, which is turned into its path on the host when monitoring the host).
 
   # ---- System inventory -----------------------------------------------------
   inventory_enabled:
     name: System inventory
-    description: Report hardware, operating system and network details to the manager.
+    description: >-
+      Report hardware, operating system and network details to the manager (and, when monitoring the
+      host, its processes, ports, users, groups and services; see Inventory - host details).
   inventory_interval:
     name: Inventory interval
     description: A number followed by s, m, h, d, w or M. Default 1h.
@@ -340,22 +370,40 @@ configuration:
     description: Collect the inventory when the agent starts.
   inventory_hardware:
     name: Inventory - hardware
-    description: CPU, memory and board details (these are the device's, shared with the host kernel).
+    description: >-
+      CPU, memory and board details of the device. Wazuh cannot name an ARM CPU by itself, so the app
+      works the name out (for example Cortex-A76) and the Wazuh dashboard shows it.
   inventory_os:
     name: Inventory - operating system
     description: Operating system and kernel details.
   inventory_network:
     name: Inventory - network
-    description: Network interfaces and addresses seen from inside this app.
+    description: >-
+      Network interfaces and addresses. When monitoring the host these are the device's, with its real
+      address.
   inventory_packages:
     name: Inventory - packages
-    description: Software packages of this app's container image. Enables vulnerability detection for them.
+    description: >-
+      Installed software packages (dpkg, rpm, apk, Python, npm) and so the input of Wazuh's vulnerability
+      detection. Home Assistant OS has no package manager of its own, so on the host this finds only
+      what is installed in the standard Python and npm locations; for the app's own container it lists
+      the Debian packages of its image.
   inventory_ports:
     name: Inventory - ports
-    description: Open ports seen from inside this app (not the host's).
+    description: >-
+      Open ports seen from inside this app. Used only when not monitoring the host; for the host,
+      Inventory - host details decides.
   inventory_processes:
     name: Inventory - processes
-    description: Processes of this app's container (not the host's).
+    description: >-
+      Processes of this app's container. Used only when not monitoring the host; for the host,
+      Inventory - host details decides.
+  inventory_host_details:
+    name: Inventory - host details
+    description: >-
+      Report the host's processes, listening ports, user accounts, groups and services, as the agent does
+      on any Linux machine. Only when monitoring the host; for this app's own container the ports and
+      processes options above decide.
 
   # ---- Response and advanced ------------------------------------------------
   active_response_enabled:

@@ -1,7 +1,7 @@
-#!/usr/bin/with-contenv bashio
+#!/usr/bin/env bashio
 # shellcheck shell=bash
 # ==============================================================================
-# One-shot initialisation, run by s6 before the agent starts:
+# One-shot initialisation, run by wazuh-ha-entrypoint before the agent starts:
 #   1. put the agent's files on the persistent /data volume (and refresh the
 #      program files after an app update without touching the agent's identity)
 #   2. render ossec.conf from the app options
@@ -16,6 +16,8 @@ readonly OPTIONS="${OPTIONS_FILE:-/data/options.json}"
 readonly CONFIG_DIR="${APP_CONFIG_DIR:-/config}"
 readonly RUNTIME="/run/wazuh-ha"
 readonly PUBLIC="${RUNTIME}/public"
+# What wazuh-ha-host found out about reaching the Home Assistant OS host (written by the entrypoint).
+readonly HOST_FACTS="${RUNTIME}/host.json"
 
 # What belongs to this installation and must survive an app update.
 readonly KEEP_TOP_LEVEL=(etc queue logs var tmp .ssh VERSION.json)
@@ -115,9 +117,16 @@ adopt_host_machine_id() {
     fi
 }
 
+# "host" when the agent will run in the Home Assistant OS host's file system, anything else when it
+# runs in this container (or cannot run at all, in which case nothing is started).
+host_mode() {
+    jq -r '.mode // "container"' "${HOST_FACTS}" 2> /dev/null || echo container
+    return 0
+}
+
 # Facts the renderer needs that only exist at runtime.
 write_runtime_info() {
-    local supervisor_info='{}' app_info='{}' journal=false
+    local supervisor_info='{}' app_info='{}' journal=false host='{}'
     if [[ -n "${SUPERVISOR_TOKEN:-}" ]]; then
         supervisor_info="$(curl -fsS --max-time 10 -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
             http://supervisor/info 2> /dev/null | jq -c '.data // {}' 2> /dev/null)" || supervisor_info='{}'
@@ -126,11 +135,19 @@ write_runtime_info() {
     else
         bashio::log.notice "No Supervisor API token: running outside Home Assistant, host labels disabled."
     fi
+    # The journal is the host's. The app has it mapped in; on the host it is where it always is.
     if find /var/log/journal /run/log/journal -name '*.journal' -print -quit 2> /dev/null | grep -q .; then
         journal=true
+    elif [[ "$(host_mode)" == host ]] \
+        && find "/proc/$(jq -r '.host_pid' "${HOST_FACTS}")/root/var/log/journal" -name '*.journal' -print -quit 2> /dev/null | grep -q .; then
+        journal=true
     fi
-    jq -n --argjson s "${supervisor_info}" --argjson a "${app_info}" --argjson j "${journal}" \
-        '$s + {app_version: ($a.version // null), journal_available: $j}' > "${RUNTIME}/info.json"
+    # The scope and, for the host, where this container's folders are on it: the renderer turns the
+    # paths in the options (/homeassistant, /config, ...) into the paths the agent will see.
+    host="$(jq -c '{mode: (.mode // "container"), mounts: (.mounts // {})}' "${HOST_FACTS}" 2> /dev/null)" \
+        || host='{"mode": "container", "mounts": {}}'
+    jq -n --argjson s "${supervisor_info}" --argjson a "${app_info}" --argjson j "${journal}" --argjson h "${host}" \
+        '$s + {app_version: ($a.version // null), journal_available: $j, host: $h}' > "${RUNTIME}/info.json"
 }
 
 main() {
@@ -151,7 +168,10 @@ main() {
         install -o root -g wazuh -m 0640 /dev/null "${LIVE}/etc/client.keys"
     fi
 
-    adopt_host_machine_id
+    # In the host's file system the journal and the machine ID are the host's own already.
+    if [[ "$(host_mode)" != host ]]; then
+        adopt_host_machine_id
+    fi
     write_runtime_info
 
     local render_args=(--options "${OPTIONS}" --info "${RUNTIME}/info.json" --outdir "${RUNTIME}/rendered")
@@ -234,6 +254,11 @@ main() {
             bashio::exit.nok "Wazuh rejected the generated configuration (${daemon}); see the lines above."
         fi
         while IFS= read -r line; do
+            # The check runs in this container. A policy file in the host's file system is not here to
+            # be found, though the agent will find it there.
+            if [[ "$(host_mode)" == host && "${line}" == *"sca: WARNING: File '"*"' not found"* ]]; then
+                continue
+            fi
             bashio::log.warning "${line}"
         done < <(grep -E ' (WARNING|ERROR):' <<< "${output}" || true)
     done

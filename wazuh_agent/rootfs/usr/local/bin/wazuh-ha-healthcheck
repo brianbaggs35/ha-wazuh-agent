@@ -7,8 +7,31 @@ set -u
 
 OSSEC=/var/ossec
 state="${OSSEC}/var/run/wazuh-agentd.state"
+access=/run/wazuh-ha/public/access.json
 
-if ! pgrep -f 'bin/wazuh-agentd' > /dev/null 2>&1; then
+# The agent was asked to monitor the Home Assistant OS host and cannot (Protection mode is on, ...):
+# nothing runs, and that is what is wrong.
+if [[ -r "${access}" && "$(jq -r '.available' "${access}" 2> /dev/null)" == false ]]; then
+    jq -r '"host access: " + .reason + ": " + .message' "${access}"
+    exit 1
+fi
+
+# wazuh-agentd is running. The app may share the host's process namespace, where a PID file left by a
+# daemon that died could name any process on the device, so the process has to be called wazuh-agentd.
+# Its name comes from /proc/PID/cmdline, which anyone may read; /proc/PID/exe needs SYS_PTRACE for a
+# daemon that has dropped to the wazuh account, so it is only an extra check when it can be read.
+running=1
+for pidfile in "${OSSEC}"/var/run/wazuh-agentd-*.pid; do
+    [[ -e "${pidfile}" ]] || continue
+    pid="$(cat "${pidfile}" 2> /dev/null)"
+    [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+    argv0="$(tr '\0' '\n' < "/proc/${pid}/cmdline" 2> /dev/null | head -n 1)"
+    exe="$(readlink "/proc/${pid}/exe" 2> /dev/null || true)"
+    if [[ "${argv0##*/}" == wazuh-agentd && ( -z "${exe}" || "${exe}" == */bin/wazuh-agentd ) ]]; then
+        running=0
+    fi
+done
+if [[ "${running}" -ne 0 ]]; then
     echo "wazuh-agentd is not running"
     exit 1
 fi
