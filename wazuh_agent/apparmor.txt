@@ -2,59 +2,50 @@
 
 # AppArmor profile for the Wazuh Agent app.
 #
-# Shipping a profile is worth +1 on the Supervisor's security rating. It follows
-# the structure of the Home Assistant default app profile on purpose: the agent
-# has to read the files it monitors, drop privileges between daemons and chroot
-# into its install directory, so the profile stays permissive about file access
-# and capabilities (the container's capability set is already limited by Docker,
-# and this app asks for no extra ones) and restricts the parts that matter:
+# Shipping a profile is worth +1 on the Supervisor's security rating. It follows the structure of
+# the Home Assistant default app profile on purpose.
 #
-#   * signals and ptrace stay inside the app's own processes
+# This app is the Wazuh agent of the Home Assistant OS device itself, not of its own container: its
+# daemons run inside the host's file system (see wazuh-ha-host), read what the host has (processes,
+# files, logs), execute the host's commands when a user configures one, and are started from a
+# private mount namespace the app builds. So the profile is permissive about files, capabilities,
+# execution and mounts (the container's capability set is the limit, and config.yaml adds only
+# SYS_ADMIN and SYS_PTRACE), and restricts the parts that still make sense:
+#
+#   * signals go only to the app's own processes: with the host's process namespace shared, a PID is
+#     a PID on the whole device, and this app has no business signalling any other
+#   * ptrace may read other processes' /proc entries, which is how the host is looked at, but may not
+#     attach to anything but the app's own processes
 #   * no access to the kernel's memory image or the sysrq trigger
 #
 # The profile name must equal the app slug.
 profile wazuh_agent flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
-  # Capabilities (limited by the container's own set; none are added)
+  # Capabilities (limited by the container's own set; config.yaml adds SYS_ADMIN and SYS_PTRACE)
   capability,
   file,
   network,
 
-  # Signals: wazuh-control and s6 stop and reload daemons with signals; Docker
-  # stops the container by signalling the init process.
+  # Mounts: the agent runs in a private copy of the host's mount namespace, with a few of the host's
+  # files covered by copies (wazuh-ha-host and hostns-start), which takes mounting.
+  mount,
+  umount,
+
+  # Signals: the app and its daemons signal each other; Docker stops the container by signalling its
+  # init process. Nothing else is signalled.
   signal (send,receive) peer=wazuh_agent,
   signal (receive) peer=unconfined,
-  signal (send) set=(kill,term,int,hup,cont,usr1,usr2,quit),
 
-  # Reading /proc/<pid> of the app's own processes (system inventory)
-  ptrace (read,readby,trace,tracedby) peer=wazuh_agent,
-  ptrace (readby) peer=unconfined,
+  # ptrace: reading /proc/<pid>/{root,ns,exe,fd} of the host's processes (system inventory, the host's
+  # file system) is "read". Attaching ("trace") is for the app's own processes only.
+  ptrace (read,readby),
+  ptrace (trace,tracedby) peer=wazuh_agent,
 
-  # S6-Overlay
-  /init ix,
-  /bin/** ix,
-  /usr/bin/** ix,
-  /usr/sbin/** ix,
-  /run/{s6,s6-rc*,service}/** ix,
-  /package/** ix,
-  /command/** ix,
-  /etc/services.d/** rwix,
-  /etc/cont-init.d/** rwix,
-  /etc/cont-finish.d/** rwix,
-  /etc/s6-overlay/** rwix,
-  /run/{,**} rwk,
-  /dev/tty rw,
-
-  # Bashio and the helper scripts
-  /usr/lib/bashio/** ix,
-  /usr/local/bin/wazuh-ha-* ix,
-  /tmp/** rwk,
-
-  # The Wazuh agent: program files and state on the persistent volume
-  # (/var/ossec is a symlink to /data/ossec).
-  /var/ossec/** rwixk,
-  /data/** rwixk,
+  # Everything that runs here inherits this profile: the app's scripts, the Wazuh daemons (from the
+  # data volume, which the host sees as /mnt/data/...), and the host's own commands that the agent
+  # runs on request (commands to monitor, active response).
+  /** ix,
 
   # Nothing here has a use for these.
   deny /proc/sysrq-trigger rwklx,

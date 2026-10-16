@@ -1,0 +1,24 @@
+#!/bin/sh
+# shellcheck shell=sh
+# Installed over the Wazuh package's active-response/bin/restart.sh by the Home Assistant app.
+#
+# Wazuh runs this when the manager pushes new shared configuration to the agent (auto_restart), and
+# for the restart-wazuh command. The package version restarts through systemd as soon as it finds
+# one: `systemctl restart wazuh-agent`. The app runs the agent inside Home Assistant OS, which has
+# systemd and no such service, so that restart would fail and the agent would never reload.
+#
+# The agent is started and supervised by the app, so all this does is ask the app to restart it.
+# The app picks the request up within a few seconds.
+#
+# Usage: restart.sh [manager|agent] [restart|reload]
+set -u
+
+action="${2:-restart}"
+
+cd "$(dirname "$0")/../.." || exit 1
+
+# Same log line the package version writes, so the log reads as before.
+echo "$(date '+%Y/%m/%d %H:%M:%S' 2> /dev/null) $0 $*" >> logs/active-responses.log
+
+request="var/run/ha-restart.request"
+printf '%s\n' "${action}" > "${request}.tmp" && mv -f "${request}.tmp" "${request}"

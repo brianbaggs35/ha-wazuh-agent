@@ -1,0 +1,265 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+# ==============================================================================
+# Runs the Wazuh agent against the Home Assistant OS host instead of against this app's container.
+#
+#   wazuh-ha-host facts          JSON: which scope applies, why (if not the one asked for), and where
+#                                this container's folders are on the host
+#   wazuh-ha-host path PATH      where PATH (a path in this container) is on the host
+#   wazuh-ha-host start          start the agent daemons inside the host's mount namespace
+#
+# Why
+# ---
+# An app is a container, so a Wazuh agent started in it sees the container: its files, its
+# operating system, its packages. Installing the agent "on the Home Assistant OS device" is not
+# possible (the host is a read-only image with no package manager), so the agent is started from
+# here but run inside the host's own mount namespace, where /etc/os-release, /proc, the journal,
+# /mnt/data and every other path is the host's.
+#
+# That needs three things, all of which Home Assistant grants an app only when it asks:
+#   * the host's process namespace (host_pid), allowed only while Protection mode is off, so the
+#     host's init is visible here and its namespaces can be joined;
+#   * the SYS_PTRACE capability, to read the namespaces of a process that holds more privileges
+#     than this container (the kernel refuses otherwise, whatever the user ID);
+#   * the SYS_ADMIN capability, to join a mount namespace and to build the small private overlay
+#     (see hostns-start) that gives the agent its "wazuh" account and a CPU name.
+# The host's network and host name come from the app manifest (host_network, host_uts).
+#
+# Exit status of `start`: 0 started; 3 host access is not available; 4 the agent cannot run in
+# the host's userland; 5 the agent rejected its configuration.
+# ==============================================================================
+set -uo pipefail
+
+readonly LIB="${WAZUH_HA_LIB:-/usr/local/lib/wazuh-ha}"
+readonly OPTIONS="${OPTIONS_FILE:-/data/options.json}"
+readonly DATA="${WAZUH_HA_DATA:-/data}"
+readonly OSSEC="${WAZUH_HA_OSSEC:-/var/ossec}"
+# 1 is the host's init. Only the tests point this at another process (a stand-in for the host), and
+# at a /proc/cpuinfo and a device tree model of their own (WAZUH_HA_CPUINFO, WAZUH_HA_BOARD_FILE).
+readonly HOST_PID="${WAZUH_HA_HOST_PID:-1}"
+readonly HOST_PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# In the order wazuh-control starts them.
+readonly DAEMONS=(wazuh-execd wazuh-agentd wazuh-syscheckd wazuh-logcollector wazuh-modulesd)
+# Where Home Assistant mounts an app's folders, whichever of them this app asked for.
+readonly CONTAINER_FOLDERS=(/data /config /homeassistant /ssl /share /media /backup /addons /addon_configs)
+
+# The scope the user asked for. Host monitoring is the default; only an explicit false turns it off
+# (jq's // would also replace false by the default).
+requested_scope() {
+    jq -r 'if .monitor_host == false then "container" else "host" end' "${OPTIONS}" 2> /dev/null || echo host
+    return 0
+}
+
+# The capabilities host access needs and this container lacks, one per line.
+missing_capabilities() {
+    local effective entry held
+    effective="$(awk '/^CapEff:/ {print $2}' /proc/self/status 2> /dev/null)"
+    : "${effective:=0}"
+    for entry in SYS_CHROOT:18 SYS_PTRACE:19 SYS_ADMIN:21; do
+        # The capability's bit in the effective set (capability(7) numbers them).
+        held=$(((16#${effective} >> ${entry##*:}) & 1))
+        if [[ "${held}" -eq 0 ]]; then
+            printf '%s\n' "${entry%%:*}"
+        fi
+    done
+    return 0
+}
+
+# Can this container see the host's mount namespace? It can when the host's init (or, in the tests,
+# the stand-in) is a process that is not in this container's own namespace.
+host_namespace_reachable() {
+    local mine theirs
+    mine="$(readlink /proc/self/ns/mnt 2> /dev/null)" || return 1
+    theirs="$(readlink "/proc/${HOST_PID}/ns/mnt" 2> /dev/null)" || return 1
+    [[ -n "${theirs}" && "${theirs}" != "${mine}" ]]
+    return
+}
+
+# What the Supervisor says about this app's protection mode: true, false or unknown.
+supervisor_protection() {
+    local answer=""
+    if [[ -n "${SUPERVISOR_TOKEN:-}" ]]; then
+        answer="$(curl -fsS --max-time 10 -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+            http://supervisor/addons/self/info 2> /dev/null \
+            | jq -r '.data.protected | if . == null then "unknown" else tostring end' 2> /dev/null)"
+    fi
+    echo "${answer:-unknown}"
+    return 0
+}
+
+# host_path PATH -> where PATH of this container is on the host (see hostpath.awk)
+host_path() {
+    local path="$1"
+    awk -v want="${path}" -f "${LIB}/hostpath.awk" /proc/self/mountinfo "/proc/${HOST_PID}/mountinfo"
+    return
+}
+
+# The container's folders that exist here, each with its path on the host: {"/data": "/mnt/data/..."}
+folder_map() {
+    local folder host map="{}"
+    for folder in "${CONTAINER_FOLDERS[@]}"; do
+        mountpoint -q "${folder}" 2> /dev/null || continue
+        host="$(host_path "${folder}")" || continue
+        map="$(jq -c --arg folder "${folder}" --arg host "${host}" '. + {($folder): $host}' <<< "${map}")"
+    done
+    printf '%s\n' "${map}"
+    return 0
+}
+
+facts() {
+    local requested mode reason="" message="" missing protection mounts="{}"
+    requested="$(requested_scope)"
+    mode="${requested}"
+
+    if [[ "${requested}" == host ]]; then
+        missing="$(missing_capabilities | paste -sd, -)"
+        if [[ -n "${missing}" ]]; then
+            mode=unavailable
+            reason=missing_capabilities
+            message="This app is missing the Linux capabilities ${missing//,/, }, which Home Assistant grants only to an app that declares them. Update the app, and check that it was not started with other privileges."
+        elif ! host_namespace_reachable; then
+            mode=unavailable
+            protection="$(supervisor_protection)"
+            case "${protection}" in
+                true)
+                    reason=protection_mode
+                    message="Protection mode is on. Monitoring the Home Assistant OS host needs this app to share the host's process namespace, which Home Assistant allows only while Protection mode is off. Open this app's Info tab, turn Protection mode off, then restart the app. To monitor only this app's own container instead, set monitor_host to false."
+                    ;;
+                false)
+                    reason=restart_needed
+                    message="Protection mode is off, but this app is still running without access to the host. Restart the app."
+                    ;;
+                *)
+                    reason=no_host_pid
+                    message="This app does not share the host's process namespace, so the host cannot be reached. Home Assistant shares it only while Protection mode is off."
+                    ;;
+            esac
+        else
+            mounts="$(folder_map)"
+        fi
+    fi
+
+    jq -cn --arg requested "${requested}" --arg mode "${mode}" --arg reason "${reason}" \
+        --arg message "${message}" --argjson pid "${HOST_PID}" --argjson mounts "${mounts}" \
+        '{requested: $requested, mode: $mode, available: ($mode != "unavailable"), reason: $reason,
+          message: $message, host_pid: $pid, mounts: $mounts}'
+    return 0
+}
+
+# --- start ------------------------------------------------------------------
+
+# Copies of the host's account files with the "wazuh" account added, for hostns-start to lay over
+# the originals inside the private namespace.
+write_account_file() {
+    local name="$1" line="$2"
+    local source="/proc/${HOST_PID}/root/etc/${name}" target="${DATA}/hostview/${name}"
+    if [[ ! -r "${source}" ]]; then
+        echo "cannot read the host's /etc/${name}" >&2
+        return 1
+    fi
+    {
+        cat "${source}"
+        # A file that does not end in a newline would swallow the line added after it.
+        [[ -z "$(tail -c 1 "${source}")" ]] || echo
+        grep -q '^wazuh:' "${source}" || printf '%s\n' "${line}"
+    } > "${target}.tmp" && mv -f "${target}.tmp" "${target}"
+    return
+}
+
+# A /proc/cpuinfo that names the CPU, for kernels (ARM) whose own does not. None when it already does.
+write_cpuinfo() {
+    local source="${WAZUH_HA_CPUINFO:-/proc/cpuinfo}" target="${DATA}/hostview/cpuinfo" board="" name
+    local board_file="${WAZUH_HA_BOARD_FILE:-/proc/device-tree/model}"
+    rm -f "${target}" "${target}.tmp"
+    if [[ -r "${board_file}" ]]; then
+        board="$(tr -d '\0' < "${board_file}")"
+    fi
+    name="$(awk -v board="${board}" -v arch="$(uname -m)" -f "${LIB}/cpuname.awk" "${source}")"
+    if [[ -n "${name}" ]]; then
+        { cat "${source}"; printf 'model name\t: %s\n' "${name}"; } > "${target}.tmp" && mv -f "${target}.tmp" "${target}"
+    fi
+    return 0
+}
+
+prepare() {
+    local hostdata="$1"
+    install -d -m 0755 "${DATA}/hostbin" "${DATA}/hostview" || return 1
+    install -m 0755 "$(command -v busybox)" "${DATA}/hostbin/busybox" || return 1
+    install -m 0755 "${LIB}/hostns-start" "${DATA}/hostbin/hostns-start" || return 1
+    write_account_file passwd "wazuh:x:$(id -u wazuh):$(id -g wazuh):Wazuh agent:/var/ossec:/sbin/nologin" || return 1
+    write_account_file group "wazuh:x:$(id -g wazuh):" || return 1
+    write_cpuinfo
+    echo "The agent will run in the host's file system; its files are at ${hostdata}/ossec on the host."
+    return 0
+}
+
+# Can the agent run in the host's userland at all? Starting one daemon with -V loads it and every
+# library it needs through the host's own dynamic loader, which is exactly what could go wrong.
+probe() {
+    local hosthome="$1" output
+    if ! output="$(env -i PATH="${HOST_PATH}" "$(command -v nsenter)" --target "${HOST_PID}" --mount -- \
+        "${hosthome}/bin/wazuh-agentd" -V 2>&1)"; then
+        printf '%s\n' "${output}" >&2
+        return 1
+    fi
+    return 0
+}
+
+# The same check wazuh-control makes before it starts anything: every daemon accepts the configuration.
+test_configuration() {
+    local daemon output
+    for daemon in "${DAEMONS[@]}"; do
+        if ! output="$("${OSSEC}/bin/${daemon}" -t 2>&1)"; then
+            printf '%s\n' "${output}" >&2
+            return 1
+        fi
+    done
+    return 0
+}
+
+launch() {
+    local hostdata="$1" hosthome="$2" busybox="$1/hostbin/busybox" pidfile
+    # What wazuh-control clears before a start: temporary files, and PID files of daemons that are gone.
+    rm -rf "${OSSEC:?}/tmp/"*
+    for pidfile in "${OSSEC}"/var/run/wazuh-*.pid; do
+        [[ -e "${pidfile}" ]] || continue
+        kill -0 "$(cat "${pidfile}")" 2> /dev/null || rm -f "${pidfile}"
+    done
+    env -i PATH="${HOST_PATH}" LANG=C "$(command -v nsenter)" --target "${HOST_PID}" --mount -- \
+        "${busybox}" unshare --mount -- \
+        "${busybox}" sh "${hostdata}/hostbin/hostns-start" "${busybox}" "${hosthome}" "${hostdata}/hostview" "${DAEMONS[@]}"
+    return
+}
+
+start() {
+    local hostdata state
+    state="$(facts)"
+    if [[ "$(jq -r .mode <<< "${state}")" != host ]]; then
+        echo "host access is not available: $(jq -r .message <<< "${state}")" >&2
+        return 3
+    fi
+    hostdata="$(host_path "${DATA}")" || {
+        echo "cannot work out where ${DATA} is on the host" >&2
+        return 3
+    }
+    prepare "${hostdata}" || return 3
+    probe "${hostdata}/ossec" || return 4
+    test_configuration || return 5
+    launch "${hostdata}" "${hostdata}/ossec"
+    return
+}
+
+main() {
+    case "${1:-}" in
+        facts) facts ;;
+        path) host_path "${2:?usage: wazuh-ha-host path PATH}" ;;
+        start) start ;;
+        *)
+            echo "usage: wazuh-ha-host facts | path PATH | start" >&2
+            return 1
+            ;;
+    esac
+    return
+}
+
+main "$@"

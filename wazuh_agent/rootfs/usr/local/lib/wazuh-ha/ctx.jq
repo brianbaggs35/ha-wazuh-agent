@@ -4,7 +4,8 @@
 #
 # $o  the options the Supervisor wrote to /data/options.json
 # $i  runtime facts: the Supervisor's /info (hostname, operating_system, ...),
-#     plus app_version and journal_available which the init script adds.
+#     plus app_version and journal_available, and host (the scope the agent runs in and, for the
+#     Home Assistant OS host, where the app's folders are on it), which the init script adds.
 #
 # Every option falls back to the same default config.yaml declares, so a
 # partial options file still renders. tests/ checks the two never drift apart.
@@ -20,6 +21,29 @@ $o[0] as $o
   def trim: gsub("^\\s+|\\s+$"; "");
   def present: . != null and ((tostring | trim | length) > 0);
   def nonblank: map(select(present) | tostring | trim);
+
+  # Where the agent runs. "host": in the Home Assistant OS host's own file system, as if it had been
+  # installed on the device. Anything else: inside this app's container.
+  def host_mode: ($i.host.mode // "container") == "host";
+
+  # A path as the agent will see it. The folders Home Assistant maps into the app (/homeassistant,
+  # /config, /ssl, /share, ...) are at other places on the host, so the paths in the options, which
+  # are written the way the app sees them, are turned into the host's. The deepest folder that
+  # contains the path wins; a path outside all of them (/etc, /mnt/boot) is the host's already.
+  def tr_path:
+    if host_mode then
+      . as $p
+      | ([($i.host.mounts // {}) | to_entries[]
+          | . as $e
+          | select($p == $e.key or ($p | startswith($e.key + "/")))]
+         | sort_by(.key | length) | last) as $m
+      | if $m == null then $p else $m.value + ($p | ltrimstr($m.key)) end
+    else . end;
+
+  # The same for the simple regular expressions of the file integrity options, which may be anchored
+  # at a folder ("^/homeassistant/.storage/").
+  def tr_regex:
+    if host_mode and startswith("^/") then "^" + (.[1:] | tr_path) else . end;
 
   def agent_name:
     (opt("agent_name"; "") | trim) as $n
@@ -89,6 +113,30 @@ $o[0] as $o
   def default_fim_nodiff:        [ "/homeassistant/secrets.yaml" ];
   def default_fim_nodiff_sregex: [ "^/homeassistant/.storage/", "^/ssl/" ];
 
+  # What a Wazuh agent monitors on a Linux machine out of the box (the package's own ossec.conf:
+  # /etc, /usr/bin, /usr/sbin, /bin, /sbin, /boot, with the same ignores and no content for the
+  # password files), plus what matters on Home Assistant OS: the boot partition, where the SSH
+  # keys of the debug login live (CONFIG/authorized_keys), root's own SSH keys, and the apps you
+  # wrote yourself. These are paths of the host.
+  def host_fim_directories:
+    [ {path: "/etc",                           realtime: true,  report_changes: false},
+      {path: "/root/.ssh",                     realtime: true,  report_changes: false},
+      {path: "/mnt/boot",                      realtime: true,  report_changes: false},
+      {path: "/mnt/data/supervisor/addons/local", realtime: true, report_changes: false},
+      {path: "/usr/bin",                       realtime: false, report_changes: false},
+      {path: "/usr/sbin",                      realtime: false, report_changes: false},
+      {path: "/bin",                           realtime: false, report_changes: false},
+      {path: "/sbin",                          realtime: false, report_changes: false} ];
+  def host_fim_ignore:
+    [ "/etc/mtab", "/etc/hosts.deny", "/etc/mail/statistics", "/etc/random-seed", "/etc/random.seed",
+      "/etc/adjtime", "/etc/httpd/logs", "/etc/utmpx", "/etc/wtmpx", "/etc/cups/certs", "/etc/dumpdates",
+      "/etc/svc/volatile", "/etc/resolv.conf" ];
+  def host_fim_ignore_sregex: [ ".swp$" ];
+  def host_fim_nodiff:        [ "/etc/shadow", "/etc/shadow-", "/etc/gshadow", "/etc/gshadow-" ];
+  def host_fim_nodiff_sregex: [ "^/etc/ssl/private/", "^/etc/pki/tls/private/" ];
+  def with_host_defaults($user; $defaults):
+    if host_mode and opt("fim_host_defaults"; true) then $user + ($defaults - $user) else $user end;
+
   ( (opt("manager_address"; "") | trim) as $primary
     | ([$primary] + (opt("manager_failover_addresses"; []) | map(trim)) | map(select(length > 0)))
   ) as $addresses
@@ -112,9 +160,9 @@ $o[0] as $o
       port:          opt("enrollment_port"; 1515),
       agent_name:    agent_name,
       groups:        (opt("agent_groups"; []) | nonblank | join(",")),
-      ca_path:       (opt("enrollment_ca_path"; "") | trim),
-      certificate_path: (opt("enrollment_certificate_path"; "") | trim),
-      key_path:      (opt("enrollment_key_path"; "") | trim),
+      ca_path:       (opt("enrollment_ca_path"; "") | trim | tr_path),
+      certificate_path: (opt("enrollment_certificate_path"; "") | trim | tr_path),
+      key_path:      (opt("enrollment_key_path"; "") | trim | tr_path),
       use_password:  (opt("enrollment_password"; "") | present),
       use_source_ip: (opt("enrollment_use_source_ip"; false) | yn),
       delay:         opt("enrollment_delay"; 20)
@@ -126,16 +174,18 @@ $o[0] as $o
       events_per_second:  opt("buffer_events_per_second"; 500)
     },
 
+    host: { enabled: host_mode },
+
     labels: labels,
 
     journal: { localfiles: journal_localfiles },
 
     files: (
       [ (if opt("ha_core_log_enabled"; false) then
-           {path: "/homeassistant/home-assistant.log", format: "syslog"}
+           {path: ("/homeassistant/home-assistant.log" | tr_path), format: "syslog"}
          else empty end) ]
       + (opt("log_files"; [])
-         | map({path: (.path | trim), format: (.format // "syslog"),
+         | map({path: (.path | trim | tr_path), format: (.format // "syslog"),
                 ignore: (.ignore // ""), restrict: (.restrict // ""),
                 exclude: (.exclude // ""), age: (.age // ""),
                 only_future_events: (if .only_future_events == null then true else .only_future_events end | yn)}))
@@ -154,7 +204,10 @@ $o[0] as $o
       check_sys:    (opt("rootcheck_check_sys"; true) | yn),
       check_pids:   (opt("rootcheck_check_pids"; false) | yn),
       check_ports:  (opt("rootcheck_check_ports"; false) | yn),
-      check_if:     (opt("rootcheck_check_if"; true) | yn)
+      check_if:     (opt("rootcheck_check_if"; true) | yn),
+      # Left out of the scans, as in the package's own configuration: other containers' storage. On
+      # Home Assistant OS that, and everything else the apps keep, lives under /mnt/data.
+      ignore:       (if host_mode then ["/var/lib/containerd", "/var/lib/docker/overlay2", "/mnt/data"] else [] end)
     },
 
     sca: {
@@ -162,7 +215,7 @@ $o[0] as $o
       scan_on_start: (opt("sca_scan_on_start"; true) | yn),
       interval:      opt("sca_interval"; "12h"),
       skip_nfs:      (opt("sca_skip_nfs"; true) | yn),
-      policies:      (opt("sca_policies"; []) | nonblank)
+      policies:      (opt("sca_policies"; []) | nonblank | map(tr_path))
     },
 
     inventory: {
@@ -173,8 +226,14 @@ $o[0] as $o
       os:            (opt("inventory_os"; true) | yn),
       network:       (opt("inventory_network"; true) | yn),
       packages:      (opt("inventory_packages"; false) | yn),
-      ports:         (opt("inventory_ports"; false) | yn),
-      processes:     (opt("inventory_processes"; false) | yn)
+      # In the host's file system these describe the device, not a container, and are what a Wazuh agent
+      # reports on any Linux machine: one switch for processes, listening ports, users, groups and
+      # services. In the container the old options still decide, and users, groups and services stay off.
+      ports:         ((if host_mode then opt("inventory_host_details"; true) else opt("inventory_ports"; false) end) | yn),
+      processes:     ((if host_mode then opt("inventory_host_details"; true) else opt("inventory_processes"; false) end) | yn),
+      users:         ((host_mode and opt("inventory_host_details"; true)) | yn),
+      groups:        ((host_mode and opt("inventory_host_details"; true)) | yn),
+      services:      ((host_mode and opt("inventory_host_details"; true)) | yn)
     },
 
     fim: {
@@ -187,17 +246,22 @@ $o[0] as $o
       sync_enabled:  (opt("fim_sync_enabled"; true) | yn),
       sync_interval: opt("fim_sync_interval"; "5m"),
       sync_max_eps:  opt("fim_sync_max_eps"; 10),
-      directories:   (opt("fim_directories"; default_fim_directories)
-                      | map({path: (.path | trim),
-                             realtime: ((.realtime // false) | yn),
-                             report_changes: ((.report_changes // false) | yn),
-                             check_all: ((if .check_all == null then true else .check_all end) | yn),
-                             restrict: (.restrict // ""), tags: (.tags // ""),
-                             recursion_level: .recursion_level})),
-      ignore:         opt("fim_ignore"; []),
-      ignore_sregex:  opt("fim_ignore_sregex"; default_fim_ignore_sregex),
-      nodiff:         opt("fim_nodiff"; default_fim_nodiff),
-      nodiff_sregex:  opt("fim_nodiff_sregex"; default_fim_nodiff_sregex)
+      directories:   (( opt("fim_directories"; default_fim_directories)
+                        | map({path: (.path | trim | tr_path), realtime: (.realtime // false),
+                               report_changes: (.report_changes // false),
+                               check_all: (if .check_all == null then true else .check_all end),
+                               restrict: (.restrict // ""), tags: (.tags // ""),
+                               recursion_level: .recursion_level}) ) as $user
+                      | ($user | map(.path)) as $taken
+                      | $user + (if host_mode and opt("fim_host_defaults"; true)
+                                 then (host_fim_directories | map(select(.path as $p | $taken | index($p) | not)
+                                         | . + {check_all: true, restrict: "", tags: "", recursion_level: null}))
+                                 else [] end)
+                      | map(. + {realtime: (.realtime | yn), report_changes: (.report_changes | yn), check_all: (.check_all | yn)})),
+      ignore:         with_host_defaults(opt("fim_ignore"; []) | map(tr_path); host_fim_ignore),
+      ignore_sregex:  with_host_defaults(opt("fim_ignore_sregex"; default_fim_ignore_sregex) | map(tr_regex); host_fim_ignore_sregex),
+      nodiff:         with_host_defaults(opt("fim_nodiff"; default_fim_nodiff) | map(tr_path); host_fim_nodiff),
+      nodiff_sregex:  with_host_defaults(opt("fim_nodiff_sregex"; default_fim_nodiff_sregex) | map(tr_regex); host_fim_nodiff_sregex)
     },
 
     active_response: { disabled: (opt("active_response_enabled"; false) | not | yn) },

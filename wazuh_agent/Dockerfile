@@ -2,8 +2,9 @@
 #
 # Debian (not Alpine) on purpose: Wazuh publishes its agent as a glibc .deb
 # (amd64 and arm64) and does not support musl. The Home Assistant Debian base
-# image brings s6-overlay and bashio, so the app plugs into the
-# Supervisor like any other app.
+# image brings bashio, so the app plugs into the Supervisor like any other app.
+# Its s6-overlay is not used: the app shares the host's process namespace to reach
+# Home Assistant OS, and s6 can only run as PID 1 (see wazuh-ha-entrypoint).
 #
 # Pinned by digest (multi-arch index: linux/amd64 + linux/arm64). Dependabot
 # keeps the digest current; do not replace it with a floating tag.
@@ -64,7 +65,7 @@ RUN set -eux; \
     groupadd --system --gid 1451 wazuhui; \
     useradd --system --uid 1451 --gid wazuhui --no-create-home --shell /sbin/nologin wazuhui; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates curl gnupg; \
+    apt-get install -y --no-install-recommends ca-certificates curl gnupg busybox-static; \
     # HTTPS only, even across redirects.
     curl -fsSL --proto '=https' --tlsv1.2 --retry 3 https://packages.wazuh.com/key/GPG-KEY-WAZUH -o /tmp/wazuh.key; \
     fingerprint="$(gpg --show-keys --with-colons /tmp/wazuh.key | awk -F: '/^fpr:/ {print $10; exit}')"; \
@@ -78,7 +79,7 @@ RUN set -eux; \
         > /etc/apt/sources.list.d/wazuh.list; \
     apt-get update; \
     apt-get install -y --no-install-recommends "wazuh-agent=${WAZUH_VERSION}-${WAZUH_PKG_REVISION}"; \
-    apt-mark manual curl ca-certificates jq procps; \
+    apt-mark manual curl ca-certificates jq procps busybox-static; \
     apt-get purge -y --auto-remove gnupg; \
     rm -rf /var/lib/apt/lists/* /tmp/wazuh.key /root/.gnupg; \
     # The agent was installed by the package at /var/ossec. Keep that pristine copy aside: at
@@ -97,17 +98,27 @@ COPY --from=ui-server /out/wazuh-ha-ui /usr/local/bin/wazuh-ha-ui
 COPY --from=ui-web /web/dist /usr/share/wazuh-ha-ui
 
 RUN chmod 0755 \
+    /usr/local/bin/wazuh-ha-entrypoint \
+    /usr/local/bin/wazuh-ha-init \
+    /usr/local/bin/wazuh-ha-host \
     /usr/local/bin/wazuh-ha-render \
     /usr/local/bin/wazuh-ha-healthcheck \
     /usr/local/bin/wazuh-ha-ui \
-    /etc/s6-overlay/s6-rc.d/init-wazuh/run \
-    /etc/s6-overlay/s6-rc.d/wazuh-agent/run \
-    /etc/s6-overlay/s6-rc.d/wazuh-agent/finish \
-    /etc/s6-overlay/s6-rc.d/wazuh-ui/run
+    /usr/local/lib/wazuh-ha/hostns-start \
+    /usr/local/lib/wazuh-ha/restart-wazuh; \
+    # The package's restart.sh restarts through systemd when it finds one, which on Home Assistant OS
+    # means `systemctl restart wazuh-agent` on a host with no such service. This one asks the app to
+    # restart the agent, which it starts and supervises itself.
+    install -o root -g wazuh -m 0750 /usr/local/lib/wazuh-ha/restart-wazuh /var/ossec.dist/active-response/bin/restart.sh
 
-# s6: give the agent time to stop its daemons cleanly (they flush their
-# databases on SIGTERM); the Supervisor's own stop timeout is set to match.
-ENV S6_SERVICES_GRACETIME=25000
+# The app's own supervisor is the entrypoint (the base image's is s6-overlay's /init). The agent is given
+# time to stop its daemons cleanly on shutdown (they flush their databases on SIGTERM); the Supervisor's
+# own stop timeout is set to match.
+ENTRYPOINT ["/usr/local/bin/wazuh-ha-entrypoint"]
+
+# Docker's init (tini) is not PID 1 when the app shares the host's process namespace. As a subreaper it
+# still collects the orphans the agent's daemons leave behind, instead of leaving them to the host.
+ENV TINI_SUBREAPER=1
 
 HEALTHCHECK --interval=60s --timeout=10s --start-period=120s --retries=3 \
     CMD ["/usr/local/bin/wazuh-ha-healthcheck"]

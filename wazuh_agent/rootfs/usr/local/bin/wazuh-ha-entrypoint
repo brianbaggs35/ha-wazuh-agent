@@ -1,0 +1,401 @@
+#!/usr/bin/env bashio
+# shellcheck shell=bash
+# ==============================================================================
+# The app's main process. It
+#   * works out whether the agent can run against the Home Assistant OS host (wazuh-ha-host),
+#   * renders the configuration (wazuh-ha-init),
+#   * serves the read-only status page,
+#   * runs the Wazuh agent and keeps it honest:
+#       - starts the daemons and streams the agent log to the app log,
+#       - restarts the whole agent if a daemon that was running dies, and when Wazuh asks for it
+#         (the manager pushed new shared configuration),
+#       - keeps the agent's own log files from growing without bound,
+#       - stops the daemons cleanly on shutdown so their databases are flushed.
+#
+# This is what s6-overlay used to do. s6 can only run as PID 1, and an app that shares the host's
+# process namespace, which is what reaching the Home Assistant OS host takes, never is: Home
+# Assistant's documentation says host_pid "does not work with S6 Overlay".
+#
+# Because that namespace is shared, a PID in this app is a PID on the whole device. Nothing here
+# signals a process it has not first checked is one of the agent's own daemons.
+# ==============================================================================
+set -uo pipefail
+
+readonly OSSEC="/var/ossec"
+readonly CONTROL="${OSSEC}/bin/wazuh-control"
+readonly OPTIONS="${OPTIONS_FILE:-/data/options.json}"
+readonly RUNTIME="/run/wazuh-ha"
+readonly PUBLIC="${RUNTIME}/public"
+readonly HOST_FACTS="${RUNTIME}/host.json"
+readonly LOGS=("${OSSEC}/logs/ossec.log" "${OSSEC}/logs/active-responses.log")
+# Written by the restart.sh this app installs over Wazuh's own, when Wazuh wants the agent restarted.
+readonly RESTART_REQUEST="${OSSEC}/var/run/ha-restart.request"
+# In the order wazuh-control reports them, and (reversed) stops them.
+readonly DAEMONS=(wazuh-modulesd wazuh-logcollector wazuh-syscheckd wazuh-agentd wazuh-execd)
+# Wazuh restarts its own daemons now and then (for example the first time the manager sends the group
+# configuration), and that takes a few seconds. Only a daemon that stays missing for this many checks
+# in a row counts as having died.
+readonly MISSING_LIMIT=5
+
+mode="container"      # host: in the Home Assistant OS host's file system; container: in this app; unavailable: nowhere
+tail_pid=""
+ui_pid=""
+stopping=0
+status_text=""
+expected=()
+
+# --- the agent's processes -----------------------------------------------------
+
+# The PIDs of one daemon, taken from its PID files, but only those that really are that daemon. With
+# the host's process namespace a stale PID file (a daemon that crashed, long ago) can name any process
+# on the device, and acting on it would be acting on that process.
+#
+# What a process is called comes from /proc/PID/cmdline, which anyone may read. /proc/PID/exe, the
+# better witness, needs the SYS_PTRACE capability for a daemon that has dropped to the wazuh account
+# (the kernel makes such a process non-dumpable), which the app has only when it runs in the host's
+# namespaces. So it is checked as well when it can be read, and is not required when it cannot.
+daemon_pids() {
+    local daemon="$1" pidfile pid argv0 exe
+    for pidfile in "${OSSEC}/var/run/${daemon}"-*.pid; do
+        [[ -e "${pidfile}" ]] || continue
+        pid="$(cat "${pidfile}" 2> /dev/null)"
+        [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+        argv0="$(tr '\0' '\n' < "/proc/${pid}/cmdline" 2> /dev/null | head -n 1)"
+        [[ "${argv0##*/}" == "${daemon}" ]] || continue
+        exe="$(readlink "/proc/${pid}/exe" 2> /dev/null || true)"
+        [[ -z "${exe}" || "${exe}" == */bin/"${daemon}" ]] || continue
+        printf '%s\n' "${pid}"
+    done
+    return 0
+}
+
+# What `wazuh-control status` prints, built from daemon_pids.
+refresh_status() {
+    local daemon
+    status_text=""
+    for daemon in "${DAEMONS[@]}"; do
+        if [[ -n "$(daemon_pids "${daemon}")" ]]; then
+            status_text+="${daemon} is running..."$'\n'
+        else
+            status_text+="${daemon} not running..."$'\n'
+        fi
+    done
+    return 0
+}
+
+running_daemons() {
+    awk '/ is running/ {print $1}' <<< "${status_text}"
+    return 0
+}
+
+start_agent() {
+    local output rc
+    if [[ "${mode}" == host ]]; then
+        output="$(wazuh-ha-host start 2>&1)"
+        rc=$?
+    else
+        output="$("${CONTROL}" start 2>&1)"
+        rc=$?
+    fi
+    printf '%s\n' "${output}"
+    if [[ "${rc}" -eq 4 ]]; then
+        # The agent cannot run in the host's userland. That says something about the device, not
+        # about a moment: show it on the status page instead of retrying silently.
+        publish_access probe_failed "The Wazuh agent could not start in the host's file system: $(tail -n 3 <<< "${output}" | tr '\n' ' ')"
+    fi
+    return "${rc}"
+}
+
+# Stops the daemons, the way wazuh-control does: ask (SIGTERM) and give them time to flush their
+# databases, then insist. In the host's process namespace only after checking what each PID is. The wait
+# is shorter than the 30 seconds the Supervisor allows the app to stop in (config.yaml: timeout).
+stop_agent() {
+    local daemon pid waited=0 left
+    if [[ "${mode}" != host ]]; then
+        "${CONTROL}" stop > /dev/null 2>&1 || true
+        return 0
+    fi
+    for daemon in "${DAEMONS[@]}"; do
+        for pid in $(daemon_pids "${daemon}"); do
+            kill -TERM "${pid}" 2> /dev/null || true
+        done
+    done
+    while ((waited < 20)); do
+        left=0
+        for daemon in "${DAEMONS[@]}"; do
+            [[ -n "$(daemon_pids "${daemon}")" ]] && left=1
+        done
+        ((left == 0)) && break
+        sleep 1
+        waited=$((waited + 1))
+    done
+    for daemon in "${DAEMONS[@]}"; do
+        for pid in $(daemon_pids "${daemon}"); do
+            kill -KILL "${pid}" 2> /dev/null || true
+        done
+    done
+    rm -f "${OSSEC}"/var/run/wazuh-*.pid
+    return 0
+}
+
+# --- what the status page shows -----------------------------------------------
+
+# publish_file NAME   (content on stdin) writes PUBLIC/NAME atomically and world-readable, so the
+# status page, which runs as an unprivileged user, never reads a half-written file.
+publish_file() {
+    local name="$1" tmp="${PUBLIC}/.$1.tmp"
+    cat > "${tmp}" && chmod 0644 "${tmp}" && mv -f "${tmp}" "${PUBLIC}/${name}"
+    return
+}
+
+# Where the agent runs and whether it can. publish_access [REASON MESSAGE] overrides what the facts say
+# (used when the agent turns out not to be able to run once it is tried).
+publish_access() {
+    if [[ $# -gt 0 ]]; then
+        jq -c --arg reason "$1" --arg message "$2" \
+            '{scope: .requested, available: false, reason: $reason, message: $message}' "${HOST_FACTS}" | publish_file access.json
+    else
+        jq -c '{scope: .requested, available: .available, reason: .reason, message: .message}' "${HOST_FACTS}" | publish_file access.json
+    fi
+    return 0
+}
+
+# Everything the status page shows, and nothing secret: daemon states, the connection state the
+# agent keeps for itself, who it is registered as (the ID and name from client.keys, never the key),
+# and the tail of its log.
+publish() {
+    local id="" name="" state="${OSSEC}/var/run/wazuh-agentd.state"
+    printf '%s\n' "${status_text}" | publish_file daemons.txt
+    # Before the agent has written its state there is nothing to show: publish an empty file.
+    if [[ -r "${state}" ]]; then
+        publish_file agentd.state < "${state}"
+    else
+        publish_file agentd.state < /dev/null
+    fi
+    read -r id name _ < "${OSSEC}/etc/client.keys" 2> /dev/null || true
+    jq -cn --arg id "${id}" --arg name "${name}" '{id: $id, name: $name}' | publish_file identity.json
+    tail -n 300 "${OSSEC}/logs/ossec.log" 2> /dev/null | publish_file log.txt
+    return 0
+}
+
+# --- the status page -----------------------------------------------------------
+
+# Where the status page listens. Inside Home Assistant the Supervisor tells the app which ingress
+# port it got (the app asks for 0, because it shares the host's network and a fixed port could be
+# taken), and on the host network only the Supervisor's own interface should be offered it, not the
+# whole local network. Anything else (the tests) leaves it to the page's default.
+ui_listen_address() {
+    local info port gateway
+    if [[ -n "${WAZUH_UI_LISTEN:-}" ]]; then
+        printf '%s' "${WAZUH_UI_LISTEN}"
+        return 0
+    fi
+    [[ -n "${SUPERVISOR_TOKEN:-}" ]] || return 0
+    info="$(curl -fsS --max-time 10 -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+        http://supervisor/addons/self/info 2> /dev/null | jq -c '.data // {}' 2> /dev/null)" || return 0
+    port="$(jq -r '.ingress_port // empty' <<< "${info}")"
+    [[ -n "${port}" ]] || return 0
+    if [[ "$(jq -r '.host_network // false' <<< "${info}")" == true ]]; then
+        gateway="$(curl -fsS --max-time 10 -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+            http://supervisor/network/info 2> /dev/null | jq -r '.data.docker.gateway // empty' 2> /dev/null)"
+        printf '%s:%s' "${gateway:-172.30.32.1}" "${port}"
+    else
+        printf ':%s' "${port}"
+    fi
+    return 0
+}
+
+# Runs the status page for as long as the app runs. It is an unprivileged account that reads only the
+# world-readable files published above: it never touches the agent's own files or its key. It only
+# answers the Supervisor's ingress gateway (172.30.32.2).
+ui_loop() {
+    local listen="$1" started child=""
+    trap 'kill "${child}" 2> /dev/null; exit 0' TERM INT
+    # Not `.ui_update_check // true`: jq's // also replaces false, so "off" would never take effect.
+    WAZUH_UI_UPDATE_CHECK="$(jq -r 'if .ui_update_check == false then "false" else "true" end' "${OPTIONS}")"
+    export WAZUH_UI_UPDATE_CHECK
+    while true; do
+        bashio::log.info "Starting the status page on ${listen:-port 8099}."
+        started=${SECONDS}
+        WAZUH_UI_LISTEN="${listen}" setpriv --reuid=wazuhui --regid=wazuhui --init-groups --no-new-privs \
+            /usr/local/bin/wazuh-ha-ui &
+        child=$!
+        wait "${child}"
+        # An address that cannot be bound right away (the gateway's, if the host does not have it) must
+        # not leave the app without its page: fall back to every address. The page still answers
+        # only the allowed clients.
+        if ((SECONDS - started < 5)) && [[ "${listen}" == *:* && "${listen}" != :* ]]; then
+            bashio::log.warning "The status page could not listen on ${listen}; listening on port ${listen##*:} instead."
+            listen=":${listen##*:}"
+        fi
+        sleep 2 &
+        wait $!
+    done
+}
+
+# --- running the agent ----------------------------------------------------------
+
+# Wazuh does not rotate the agent's logs; keep one previous copy of each.
+rotate_logs() {
+    local file size max_mb
+    max_mb="$(jq -r '.log_max_size_mb // 10' "${OPTIONS}" 2> /dev/null || echo 10)"
+    for file in "${LOGS[@]}"; do
+        [[ -f "${file}" ]] || continue
+        size="$(stat -c %s "${file}" 2> /dev/null || echo 0)"
+        if ((size > max_mb * 1024 * 1024)); then
+            cp -f "${file}" "${file}.1" && : > "${file}"
+        fi
+    done
+    return 0
+}
+
+# Stops everything the agent run started, so that the next attempt starts from nothing.
+abandon_agent() {
+    [[ -n "${tail_pid}" ]] && kill "${tail_pid}" 2> /dev/null
+    tail_pid=""
+    stop_agent
+    return 0
+}
+
+fail() {
+    bashio::log.error "$1"
+    tail -n 20 "${OSSEC}/logs/ossec.log" 2> /dev/null
+    abandon_agent
+    return 1
+}
+
+# Starts the daemons and notes which of them came up. Modules the user switched off legitimately exit,
+# and must not count as failures later.
+begin_agent() {
+    bashio::log.info "Starting the Wazuh agent daemons."
+    # A fresh log per start; the previous run's log is kept as .1
+    [[ -f "${OSSEC}/logs/ossec.log" ]] && mv -f "${OSSEC}/logs/ossec.log" "${OSSEC}/logs/ossec.log.1"
+    start_agent || {
+        fail "The Wazuh agent could not be started."
+        return 1
+    }
+    refresh_status
+    publish
+
+    if [[ -z "${tail_pid}" ]]; then
+        tail -n +1 -F "${OSSEC}/logs/ossec.log" 2> /dev/null &
+        tail_pid=$!
+    fi
+
+    # Give the daemons time to settle, then remember which ones came up.
+    sleep 10 &
+    wait $!
+    refresh_status
+    mapfile -t expected < <(running_daemons)
+    printf '%s\n' "${expected[@]}" | publish_file expected.txt
+    publish
+    if ! printf '%s\n' "${expected[@]}" | grep -qx 'wazuh-agentd'; then
+        fail "wazuh-agentd did not stay up. The agent log above says why (commonly: wrong manager address, or enrollment refused)."
+        return 1
+    fi
+    # Running now, so whatever a failed attempt said about host access no longer holds.
+    publish_access
+    bashio::log.info "Wazuh agent running: ${expected[*]}"
+    return 0
+}
+
+# One run of the agent: start it, then watch it until it fails or the app stops.
+run_agent() {
+    local ticks=0 daemon action now
+    local -A missing=()
+
+    begin_agent || return 1
+    while ((!stopping)); do
+        sleep 5 &
+        wait $!
+
+        # Wazuh asked for a restart (the manager pushed new shared configuration to the agent).
+        if [[ -e "${RESTART_REQUEST}" ]]; then
+            action="$(cat "${RESTART_REQUEST}" 2> /dev/null)"
+            rm -f "${RESTART_REQUEST}"
+            bashio::log.info "Wazuh asked for the agent to be restarted (${action:-restart}); restarting it."
+            stop_agent
+            sleep 1
+            begin_agent || return 1
+            missing=()
+        fi
+
+        refresh_status
+        publish
+        mapfile -t now < <(running_daemons)
+        for daemon in "${expected[@]}"; do
+            if printf '%s\n' "${now[@]}" | grep -qx "${daemon}"; then
+                missing["${daemon}"]=0
+            else
+                missing["${daemon}"]=$((${missing["${daemon}"]:-0} + 1))
+                if ((missing["${daemon}"] >= MISSING_LIMIT)); then
+                    fail "${daemon} stopped and did not come back; restarting the agent."
+                    return 1
+                fi
+            fi
+        done
+
+        ticks=$((ticks + 1))
+        if ((ticks % 120 == 0)); then
+            rotate_logs
+        fi
+    done
+    return 0
+}
+
+# The agent cannot run where the app was asked to monitor. Nothing is started, and the status page
+# says why; this only keeps the app (and so that page) alive.
+wait_without_agent() {
+    local ticks=0 reason message
+    reason="$(jq -r .reason "${HOST_FACTS}")"
+    message="$(jq -r .message "${HOST_FACTS}")"
+    bashio::log.error "The Wazuh agent was not started (${reason}). ${message}"
+    while ((!stopping)); do
+        sleep 5 &
+        wait $!
+        ticks=$((ticks + 1))
+        if ((ticks % 120 == 0)); then
+            bashio::log.warning "Still waiting: ${message}"
+        fi
+    done
+    return 0
+}
+
+shutdown() {
+    stopping=1
+    bashio::log.info "Stopping the Wazuh agent."
+    [[ -n "${ui_pid}" ]] && kill "${ui_pid}" 2> /dev/null
+    abandon_agent
+    exit 0
+}
+trap shutdown TERM INT
+
+main() {
+    mkdir -p "${RUNTIME}"
+
+    wazuh-ha-host facts > "${HOST_FACTS}"
+    mode="$(jq -r '.mode' "${HOST_FACTS}")"
+
+    # Renders the configuration; refuses to go on if the options are invalid (it says which).
+    wazuh-ha-init || return 1
+
+    ui_loop "$(ui_listen_address)" &
+    ui_pid=$!
+    publish_access
+
+    if [[ "${mode}" == unavailable ]]; then
+        wait_without_agent
+        return 0
+    fi
+
+    while ((!stopping)); do
+        run_agent
+        ((stopping)) && break
+        # Slow down the restart loop if the problem is persistent (bad manager address, ...).
+        sleep 30 &
+        wait $!
+    done
+    return 0
+}
+
+main "$@"
