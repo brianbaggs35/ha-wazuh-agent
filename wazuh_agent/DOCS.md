@@ -316,6 +316,8 @@ app asks Home Assistant for what it takes to do the same, and the rating reports
 | `SYS_PTRACE` | Reading the namespaces of processes that hold more privileges than the container (the kernel refuses otherwise, whatever the user) | Finding and joining the device's file system |
 | `SYS_ADMIN` | Joining the device's mount namespace, and mounting inside a private copy of it | Running the agent in the device's file system, with the private overlay below |
 
+With Protection mode off, the Supervisor writes a warning to its log every time the app starts ("running with disabled protected mode"); that is this, and expected.
+
 **Treat the app as having root on the device.** Wazuh agents do on any machine they monitor, and
 this one is no different. What it does not ask for: full access to the hardware, the Docker API,
 published ports, or a Supervisor role above the default (it makes info calls only, for the agent name

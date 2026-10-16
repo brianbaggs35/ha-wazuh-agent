@@ -92,7 +92,7 @@ running_daemons() {
 }
 
 start_agent() {
-    local output rc reason
+    local output rc reason hint
     if [[ "${mode}" == host ]]; then
         output="$(wazuh-ha-host start 2>&1)"
         rc=$?
@@ -108,7 +108,11 @@ start_agent() {
     if [[ "${mode}" == host && "${rc}" -ne 0 && "${rc}" -ne 3 && "${rc}" -ne 5 ]]; then
         reason=start_failed
         [[ "${rc}" -eq 4 ]] && reason=probe_failed
-        publish_access "${reason}" "The Wazuh agent could not start in the host's file system: $(tail -n 3 <<< "${output}" | tr '\n' ' ')"
+        hint=""
+        if grep -qE 'Permission denied|Operation not permitted' <<< "${output}"; then
+            hint=" Something refused the app: a security policy such as AppArmor, or a missing capability. The Supervisor's log may say which."
+        fi
+        publish_access "${reason}" "The Wazuh agent could not start in the host's file system: $(tail -n 3 <<< "${output}" | tr '\n' ' ')${hint}"
     fi
     return "${rc}"
 }

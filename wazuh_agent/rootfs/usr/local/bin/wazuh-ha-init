@@ -96,6 +96,8 @@ fix_ownership() {
 clear_stale_runtime_state() {
     rm -rf "${LIVE}/var/start-script-lock"
     find "${LIVE}/var/run" -maxdepth 1 \( -name '*.pid' -o -name 'wazuh-agentd.state' \) -delete 2> /dev/null || true
+    # A restart Wazuh asked for just before the last run ended has been done by starting again.
+    rm -f "${LIVE}/var/run/ha-restart.request"
 }
 
 # Wazuh opens the journal with SD_JOURNAL_LOCAL_ONLY, which only reads journal
