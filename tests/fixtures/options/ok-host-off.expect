@@ -1,0 +1,11 @@
+has: >/mnt/data/supervisor/homeassistant</directories>
+no: >/etc</directories>
+no: >/root/.ssh</directories>
+no: >/mnt/boot</directories>
+no: <ignore>/etc/mtab</ignore>
+has: <processes>no</processes>
+has: <ports all="yes">no</ports>
+has: <users>no</users>
+has: <groups>no</groups>
+has: <services>no</services>
+has: <ignore>/mnt/data</ignore>

@@ -1,0 +1,41 @@
+# The SCA policy files are in the host's file system, which this check (run in the app container)
+# cannot see, so Wazuh says it cannot find them. The app knows, and does not repeat the warning.
+allow: sca: WARNING: File '/mnt/data/supervisor/addon_configs/local_wazuh_agent/sca/home-assistant.yml' not found.
+allow: sca: WARNING: File '/etc/sca/host-policy.yml' not found.
+has: <server_ca_path>/mnt/data/supervisor/addon_configs/local_wazuh_agent/ca.pem</server_ca_path>
+has: <agent_certificate_path>/mnt/data/supervisor/addon_configs/local_wazuh_agent/agent.pem</agent_certificate_path>
+has: <agent_key_path>/mnt/data/supervisor/addon_configs/local_wazuh_agent/agent.key</agent_key_path>
+no: <server_ca_path>/config/
+has: <location>/mnt/data/supervisor/homeassistant/home-assistant.log</location>
+has: <location>/mnt/data/supervisor/share/myapp/*.log</location>
+has: <location>/var/log/messages</location>
+no: <location>/homeassistant/home-assistant.log</location>
+has: >/mnt/data/supervisor/homeassistant</directories>
+has: >/mnt/data/supervisor/ssl</directories>
+no: >/homeassistant</directories>
+no: >/ssl</directories>
+has: report_changes="yes" check_all="yes">/etc</directories>
+has: >/media/recordings</directories>
+has: >/root/.ssh</directories>
+has: >/mnt/boot</directories>
+has: >/mnt/data/supervisor/addons/local</directories>
+has: >/usr/bin</directories>
+has: >/usr/sbin</directories>
+has: <ignore>/mnt/data/supervisor/homeassistant/www</ignore>
+has: <ignore>/etc/mtab</ignore>
+has: <ignore type="sregex">.swp$</ignore>
+has: <nodiff>/mnt/data/supervisor/homeassistant/secrets.yaml</nodiff>
+has: <nodiff>/etc/shadow</nodiff>
+has: <nodiff type="sregex">^/mnt/data/supervisor/ssl/</nodiff>
+has: <nodiff type="sregex">^/mnt/data/supervisor/homeassistant/.storage/</nodiff>
+has: <nodiff type="sregex">/private/</nodiff>
+has: <policy>/mnt/data/supervisor/addon_configs/local_wazuh_agent/sca/home-assistant.yml</policy>
+has: <policy>/etc/sca/host-policy.yml</policy>
+has: <processes>yes</processes>
+has: <ports all="yes">yes</ports>
+has: <users>yes</users>
+has: <groups>yes</groups>
+has: <services>yes</services>
+has: <ignore>/mnt/data</ignore>
+has: <ignore>/var/lib/docker/overlay2</ignore>
+has: <label key="ha_os_version">17.0</label>

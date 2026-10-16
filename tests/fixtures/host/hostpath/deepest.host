@@ -1,0 +1,2 @@
+20 1 8:2 / /mnt/data rw,relatime - ext4 /dev/sda2 rw
+21 1 8:2 /supervisor/share /mnt/share rw,relatime - ext4 /dev/sda2 rw
