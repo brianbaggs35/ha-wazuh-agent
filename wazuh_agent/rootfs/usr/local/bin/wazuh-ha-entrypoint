@@ -20,6 +20,9 @@
 # signals a process it has not first checked is one of the agent's own daemons.
 # ==============================================================================
 set -uo pipefail
+# The bashio launcher turns errexit on before it runs this script. A supervisor has to outlive the
+# failure of what it supervises (an attempt that fails returns non-zero, and is retried), so it is off.
+set +o errexit +o errtrace
 
 readonly OSSEC="/var/ossec"
 readonly CONTROL="${OSSEC}/bin/wazuh-control"
