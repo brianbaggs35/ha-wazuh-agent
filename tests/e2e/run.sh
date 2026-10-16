@@ -711,9 +711,9 @@ scenario_host() {
             fail "file integrity alert for the host's ${path}"
         fi
     done
-    [[ "$(manager_alert_count '"path":"/homeassistant/')" == 0 ]] \
-        && pass "no alert carries the app's own path of the Home Assistant folder" \
-        || fail "no alert carries the app's own path of the Home Assistant folder"
+    [[ "$(manager_alert_count_for "${name}" '"path":"/homeassistant/')" == 0 ]] \
+        && pass "no alert of this agent carries the app's own path of the Home Assistant folder" \
+        || fail "no alert of this agent carries the app's own path of the Home Assistant folder"
 
     # --- the host's journal
     journal_emit "${jw}" sshd 5 "Failed password for invalid user e2ehost from 192.0.2.31 port 4001 ssh2"
@@ -1020,14 +1020,21 @@ scenario_host_apparmor() {
     # The kernel log, before and after: every denial of this profile is a line in it.
     after="$(apparmor_denials "${profile}")"
     check_equal "the profile denied nothing the agent needed" "$((after - before))" 0
+    if [[ "$((after - before))" -ne 0 ]]; then
+        apparmor_log "${profile}" | tail -n 8 | sed 's/^/    | /'
+    fi
     # The control: a signal to a process that is not the app's own is what the profile refuses, and the
     # kernel log must show it, or the zero above would mean nothing.
     docker exec "${c}" bash -c 'kill -0 1' > /dev/null 2>&1 || true
     sleep 2
     control="$(apparmor_denials "${profile}")"
-    [[ "${control}" -gt "${after}" ]] \
-        && pass "(control) a signal the profile forbids is denied and logged" \
-        || fail "(control) a signal the profile forbids is denied and logged"
+    if [[ "${control}" -gt "${after}" ]]; then
+        pass "(control) a signal the profile forbids is denied and logged"
+    else
+        fail "(control) a signal the profile forbids is denied and logged"
+        info "what the logs say about AppArmor:"
+        apparmor_sample
+    fi
     sudo -n apparmor_parser -R "${profile_file}" > /dev/null 2>&1 || true
     return 0
 }

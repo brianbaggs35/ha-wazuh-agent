@@ -133,10 +133,45 @@ apparmor_available() {
     return
 }
 
-# apparmor_denials PROFILE -> how many lines of the kernel log say the profile denied something
+# apparmor_log PROFILE -> the lines in which that profile was denied something. Where the kernel
+# writes them depends on the machine: the kernel's ring buffer, the journal (systemd's journald takes over
+# auditing when it starts, so on Ubuntu they are only there), or auditd's own file.
+apparmor_log() {
+    local profile="$1"
+    {
+        sudo -n dmesg 2> /dev/null
+        sudo -n journalctl -b --no-pager -q -o cat _TRANSPORT=audit _TRANSPORT=kernel 2> /dev/null
+        sudo -n cat /var/log/audit/audit.log 2> /dev/null
+    } | grep "apparmor=\"DENIED\".*profile=\"${profile}\"" || true
+    return 0
+}
+
+# apparmor_denials PROFILE -> how many such lines there are
 apparmor_denials() {
-    local profile="$1" log
-    log="$(sudo -n dmesg 2> /dev/null)"
-    grep -c "apparmor=\"DENIED\".*profile=\"${profile}\"" <<< "${log}" || true
+    local profile="$1" lines
+    lines="$(apparmor_log "${profile}")"
+    if [[ -z "${lines}" ]]; then
+        echo 0
+    else
+        wc -l <<< "${lines}"
+    fi
+    return 0
+}
+
+# apparmor_sample -> what the machine's logs say about AppArmor at all, for when a check fails
+apparmor_sample() {
+    {
+        sudo -n dmesg 2> /dev/null
+        sudo -n journalctl -b --no-pager -q -o cat _TRANSPORT=audit _TRANSPORT=kernel 2> /dev/null
+    } | grep -i apparmor | tail -n 6 | sed 's/^/    | /' || true
+    return 0
+}
+
+# manager_alert_count_for AGENT TEXT -> how many alerts of that agent contain TEXT (the manager is shared
+# by every scenario, so a count over all alerts also counts what the others caused)
+manager_alert_count_for() {
+    local agent="$1" text="$2"
+    docker exec "${MANAGER}" bash -c \
+        "grep -F -- '\"name\":\"${agent}\"' /var/ossec/logs/alerts/alerts.json | grep -cF -- '${text}' || true"
     return 0
 }
