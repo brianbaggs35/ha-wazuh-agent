@@ -146,14 +146,15 @@ apparmor_log() {
     return 0
 }
 
-# apparmor_denials PROFILE -> how many such lines there are
+# apparmor_denials PROFILE -> how many denials that is. The same record is in the ring buffer and in
+# the journal, so they are counted by their audit serial, "audit(<time>:<serial>)", once each.
 apparmor_denials() {
-    local profile="$1" lines
-    lines="$(apparmor_log "${profile}")"
-    if [[ -z "${lines}" ]]; then
+    local profile="$1" serials
+    serials="$(apparmor_log "${profile}" | grep -o 'audit([0-9.]*:[0-9]*)' | sort -u || true)"
+    if [[ -z "${serials}" ]]; then
         echo 0
     else
-        wc -l <<< "${lines}"
+        wc -l <<< "${serials}"
     fi
     return 0
 }

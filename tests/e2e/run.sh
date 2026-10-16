@@ -1001,13 +1001,15 @@ scenario_host_apparmor() {
     else
         fail "the agent enrolls and is Active with the profile enforced"
         dump_agent "${c}"
-        sudo -n dmesg 2> /dev/null | grep "apparmor=\"DENIED\".*profile=\"${profile}\"" | tail -8 | sed 's/^/    | /'
+        apparmor_log "${profile}" | tail -n 8 | sed 's/^/    | /'
         sudo -n apparmor_parser -R "${profile_file}" || true
         return 0
     fi
     host_settle "${c}"
-    local id
+    local id victim
     id="$(manager_agent_id "${name}")"
+    # The stand-in device's main process: it runs outside the profile, as the real device's init does.
+    victim="$(docker inspect -f '{{.State.Pid}}' "${h}")"
     check_equal "the inventory is the host's under the profile" \
         "$(manager_item "/syscollector/${id}/os" '.os.name')" "${HOST_OS_NAME}"
     docker exec "${h}" bash -c 'echo "X11Forwarding yes" >> /etc/ssh/sshd_config'
@@ -1016,6 +1018,9 @@ scenario_host_apparmor() {
         || fail "file integrity of the host's files works under the profile"
     assert "the agent is connected after Wazuh's restart, which the app did under the profile" \
         docker exec "${c}" wazuh-ha-healthcheck
+    # Reading other processes is allowed on purpose: it is how the app looks at the device.
+    assert "the app can still read the device's processes (their executable and file system)" \
+        docker exec "${c}" bash -c "readlink /proc/${victim}/exe > /dev/null && ls /proc/${victim}/root/ > /dev/null"
 
     # The kernel log, before and after: every denial of this profile is a line in it.
     after="$(apparmor_denials "${profile}")"
@@ -1023,15 +1028,27 @@ scenario_host_apparmor() {
     if [[ "$((after - before))" -ne 0 ]]; then
         apparmor_log "${profile}" | tail -n 8 | sed 's/^/    | /'
     fi
-    # The control: a signal to a process that is not the app's own is what the profile refuses, and the
-    # kernel log must show it, or the zero above would mean nothing.
-    docker exec "${c}" bash -c 'kill -0 1' > /dev/null 2>&1 || true
+
+    # The controls. That zero means something only if the log would show a denial, so make the profile
+    # refuse two things and look for them, aimed at the device's main process. Not the null signal
+    # ("kill -0"): the kernel never asks AppArmor about that one. SIGWINCH is ignored by a process that
+    # does not handle it, and opening /proc/PID/mem only asks for the right to attach: it reads nothing.
+    if docker exec "${c}" bash -c "kill -WINCH ${victim}" > /dev/null 2>&1; then
+        fail "(control) a signal to a process outside the profile is refused"
+    else
+        pass "(control) a signal to a process outside the profile is refused"
+    fi
+    if docker exec "${c}" bash -c "exec 3< /proc/${victim}/mem" > /dev/null 2>&1; then
+        fail "(control) attaching to a process outside the profile (ptrace) is refused"
+    else
+        pass "(control) attaching to a process outside the profile (ptrace) is refused"
+    fi
     sleep 2
     control="$(apparmor_denials "${profile}")"
-    if [[ "${control}" -gt "${after}" ]]; then
-        pass "(control) a signal the profile forbids is denied and logged"
+    if [[ "$((control - after))" -ge 2 ]]; then
+        pass "(control) the kernel log shows both refusals"
     else
-        fail "(control) a signal the profile forbids is denied and logged"
+        fail "(control) the kernel log shows both refusals"
         info "what the logs say about AppArmor:"
         apparmor_sample
     fi
