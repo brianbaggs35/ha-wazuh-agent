@@ -12,13 +12,16 @@ wazuh_agent/            the Home Assistant app (this is what the Supervisor sees
   ui/server/            the status page's server (Go, standard library only)
   ui/web/               the status page (Vue 3 + Vuetify, TypeScript)
   rootfs/               what is copied into the image
-    etc/s6-overlay/s6-rc.d/   the init step and the agent service
-    usr/local/lib/wazuh-ha/   jq programs: validation, render context, and the writers of ossec.conf
-    usr/local/bin/            the renderer and the health check
+    usr/local/bin/            wazuh-ha-entrypoint (the app's supervisor), -init, -host (runs the agent
+                              in the Home Assistant OS host's file system), the renderer, the health check
+    usr/local/lib/wazuh-ha/   jq programs (validation, render context, the writers of ossec.conf), the awk
+                              programs that find the host's paths and name an ARM CPU, hostns-start (runs
+                              inside the host's mount namespace) and the restart.sh that replaces Wazuh's
 tests/
-  config/    static checks: options vs translations, security rating, versions
+  config/    static checks: options vs translations, the reviewed host access and its security rating, versions
   render/    renders fixtures inside the image; every Wazuh daemon checks the result
-  e2e/       the image against a real Wazuh manager
+  host/      unit tests of the host helpers (mount-table matching, CPU naming, reachability) in the image
+  e2e/       the image against a real Wazuh manager, in a container and against a stand-in for the device
   scripts/   unit tests for scripts/wazuh_update.py
 scripts/ci/  coverage.sh: every language's unit tests, with a 100% floor
 scripts/     maintenance scripts
@@ -40,8 +43,10 @@ python3 -m pip install coverage && scripts/ci/coverage.sh
 # build the image once, then:
 docker build -t ha-wazuh-agent:test wazuh_agent
 IMAGE=ha-wazuh-agent:test tests/render/run.sh        # about a minute
-IMAGE=ha-wazuh-agent:test tests/e2e/run.sh            # about 15 minutes; starts a real Wazuh manager
+IMAGE=ha-wazuh-agent:test tests/host/run.sh          # about a minute
+IMAGE=ha-wazuh-agent:test tests/e2e/run.sh            # about 25 minutes; starts a real Wazuh manager
 IMAGE=ha-wazuh-agent:test tests/e2e/run.sh enroll     # a single scenario
+IMAGE=ha-wazuh-agent:test tests/e2e/run.sh host       # the agent against a stand-in for the device
 ```
 
 `MANAGER_VERSION=4.14.8` runs the end-to-end tests against a different manager version.
@@ -60,10 +65,16 @@ IMAGE=ha-wazuh-agent:test tests/e2e/run.sh enroll     # a single scenario
 
 ## Rules this project keeps
 
-- **The security rating stays at 8.** `tests/config/check_config.py` recomputes the Supervisor's
-  rating from `config.yaml` and fails if it drops, or if the app starts asking for host network,
-  ports, capabilities, full access, a host PID namespace or the Docker API. Changing that is a
-  design decision: change `MINIMUM_RATING` in the same pull request and explain why.
+- **The app is the agent of the Home Assistant OS device, and asks for exactly the access that takes.**
+  `tests/config/check_config.py` recomputes the Supervisor's rating from `config.yaml` (3 today) and
+  fails if it changes, or if the app asks for anything beyond `host_pid`, `host_network`, `host_uts` and
+  the `SYS_PTRACE` and `SYS_ADMIN` capabilities (full access, the Docker API, ports, a higher
+  Supervisor role). Adding to that list is a design decision: change the list and `MINIMUM_RATING`
+  together in the pull request, explain why, and update the Security section of `DOCS.md`, which says
+  what each permission is for.
+- **Nothing in the app signals or trusts a process it has not checked.** The app shares the device's
+  process namespace, so a PID is a PID on the whole device: the supervisor and the health check only
+  act on a PID whose command line is a Wazuh daemon's.
 - **Coverage stays at 100%** for Python, Go and the web code (`scripts/ci/coverage.sh`).
 - **Every option has a translation and a default** that satisfies its own schema (checked).
 - **The renderer's built-in defaults equal `config.yaml`** (checked by the render tests).
