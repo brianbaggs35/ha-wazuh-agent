@@ -74,18 +74,21 @@ check_cpuname() {
     return 0
 }
 
-# facts NAME OPTIONS-FILE EXPECTED-JQ-TESTS... [-- docker run options]
+# check_facts NAME OPTIONS-FILE JQ-TEST... [-- docker run options...]
 # Runs `wazuh-ha-host facts` in the image and checks the answer against each jq test.
 check_facts() {
-    local name="$1" options="$2" out test
+    local name="$1" options="$2" out arg test after_separator=0
     shift 2
     local tests=() docker_args=()
-    while [[ $# -gt 0 && "$1" != "--" ]]; do
-        tests+=("$1")
-        shift
+    for arg in "$@"; do
+        if [[ "${after_separator}" -eq 1 ]]; then
+            docker_args+=("${arg}")
+        elif [[ "${arg}" == "--" ]]; then
+            after_separator=1
+        else
+            tests+=("${arg}")
+        fi
     done
-    [[ "${1:-}" == "--" ]] && shift
-    docker_args=("$@")
     out="$(docker run --rm --entrypoint wazuh-ha-host -v "${FIXTURES}:/f:ro" -e "OPTIONS_FILE=/f/${options}" \
         "${docker_args[@]}" "${IMAGE}" facts 2>&1)"
     for test in "${tests[@]}"; do
