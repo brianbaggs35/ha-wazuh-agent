@@ -7,6 +7,7 @@
 #                                this container's folders are on the host
 #   wazuh-ha-host path PATH      where PATH (a path in this container) is on the host
 #   wazuh-ha-host start          start the agent daemons inside the host's mount namespace
+#   wazuh-ha-host core-python    keep the link to Home Assistant Core's Python packages current
 #
 # Why
 # ---
@@ -146,6 +147,61 @@ facts() {
     return 0
 }
 
+# --- Home Assistant Core's Python packages ---------------------------------------
+
+# Home Assistant OS has no package manager, so the host itself has nothing for Wazuh's vulnerability
+# detection to match. What the device runs is mostly Home Assistant Core, a Python application whose
+# dependencies Wazuh does have advisories for (PyPI, through OSV). Core is a container of its own, so
+# its Python packages are in its file system, not the host's; but the app shares the host's process
+# namespace, and a process of Core shows its file system as /proc/PID/root.
+#
+# Wazuh reads Python packages only from fixed places (/home/*/.local/lib/python*/*-packages is one),
+# so hostns-start gives the agent a /home with that place in it, linked to ${DATA}/hostview/corepython.
+# The link below is what that one points at. It names a PID, and Core gets a new one every time it
+# restarts, so it is kept current from outside (the supervisor calls this every few seconds) and the
+# agent never has to be restarted for it.
+
+# The PID of a process of Home Assistant Core, or nothing. Its command line is "python3 -m homeassistant ...".
+# Only builtins read it: this looks at every process of the device, every few seconds when Core is not there.
+core_pid() {
+    local cmdline pid first second third
+    for cmdline in /proc/[0-9]*/cmdline; do
+        first="" second="" third=""
+        { IFS= read -r -d '' first && IFS= read -r -d '' second && IFS= read -r -d '' third; } 2> /dev/null < "${cmdline}"
+        if [[ "${first} ${second} ${third}" == "python3 -m homeassistant"* ]]; then
+            pid="${cmdline#/proc/}"
+            printf '%s\n' "${pid%/cmdline}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Whether the Python packages of Home Assistant Core are to be inventoried: on unless the option says
+# otherwise (jq's // would also replace false by the default).
+core_python_enabled() {
+    jq -e '.inventory_core_packages != false' "${OPTIONS}" > /dev/null 2>&1
+    return
+}
+
+core_python() {
+    local link="${DATA}/hostview/corepython" marker="${DATA}/hostview/corepython.enabled" pid packages
+    if ! core_python_enabled || [[ ! -d "${DATA}/hostview" ]]; then
+        rm -f "${link}" "${marker}"
+        return 0
+    fi
+    : > "${marker}"
+    # Still pointing at a live Core: nothing to do.
+    [[ -d "${link}" ]] && return 0
+    rm -f "${link}"
+    pid="$(core_pid)" || return 0
+    packages="$(compgen -G "/proc/${pid}/root/usr/local/lib/python3*/site-packages" | head -n 1)"
+    if [[ -n "${packages}" ]]; then
+        ln -sfn "${packages}" "${link}"
+    fi
+    return 0
+}
+
 # --- start ------------------------------------------------------------------
 
 # Copies of the host's account files with the "wazuh" account added, for hostns-start to lay over
@@ -189,6 +245,7 @@ prepare() {
     write_account_file passwd "wazuh:x:$(id -u wazuh):$(id -g wazuh):Wazuh agent:/var/ossec:/sbin/nologin" || return 1
     write_account_file group "wazuh:x:$(id -g wazuh):" || return 1
     write_cpuinfo
+    core_python
     echo "The agent will run in the host's file system; its files are at ${hostdata}/ossec on the host."
     return 0
 }
@@ -254,8 +311,9 @@ main() {
         facts) facts ;;
         path) host_path "${2:?usage: wazuh-ha-host path PATH}" ;;
         start) start ;;
+        core-python) core_python ;;
         *)
-            echo "usage: wazuh-ha-host facts | path PATH | start" >&2
+            echo "usage: wazuh-ha-host facts | path PATH | start | core-python" >&2
             return 1
             ;;
     esac

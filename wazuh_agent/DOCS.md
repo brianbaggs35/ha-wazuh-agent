@@ -116,7 +116,7 @@ The agent runs inside the device's own file system, so every Wazuh feature looks
 | --- | --- | --- |
 | **Host journal** | SSH logins (`sshd`, `dropbear`), `sudo`/`su`/`login`, kernel warnings, **Home Assistant Core** logs (including failed web login attempts), **Supervisor** logs, and errors from any service. Optionally every app's logs, or the entire journal. | Yes (not apps/all) |
 | **File integrity** | Added, changed and deleted files in the Home Assistant configuration and certificates, **and** what a Wazuh agent watches on any Linux machine (`/etc`, `/usr/bin`, `/usr/sbin`, `/bin`, `/sbin`) plus the boot partition (`/mnt/boot`, where the SSH keys of the debug login live), root's SSH keys (`/root/.ssh`) and your own apps (`/mnt/data/supervisor/addons/local`). Real time where it matters. | Yes |
-| **System inventory** | The device's hardware (CPU name, cores, memory), its operating system and version, network interfaces and its real address, **processes**, **listening ports** (with the process that opened them), **user accounts and groups** and **services**. | Yes (packages: no) |
+| **System inventory** | The device's hardware (CPU name, cores, memory), its operating system and version, network interfaces and its real address, **processes**, **listening ports** (with the process that opened them), **user accounts and groups**, **services**, and the **Python packages of Home Assistant Core**. | Yes |
 | **Rootkit checks** | Known rootkit files, trojaned binaries, `/dev`, network interfaces and system file permissions, on the device. | Yes (process and port checks: no) |
 | **Configuration assessment (SCA)** | Policy checks run against the device, with policies you supply (Wazuh's built-in ones are written for Debian, Ubuntu and similar systems). | No |
 | **Custom logs and commands** | Any file or command output you add. Commands run on the device. | None |
@@ -153,9 +153,13 @@ translated: write the device's paths there.
   reports with vendor and open-source advisories. Home Assistant OS has no package manager and is not
   one of the operating systems Wazuh has vulnerability content for (Wazuh's compatibility matrix
   lists, among others, Debian, Ubuntu, Red Hat, SUSE and Amazon Linux, plus Python and npm packages),
-  so it reports nothing about the software of the operating system itself, whatever the permissions
-  of the agent. With **Inventory - packages** on it reports the packages it does find in the standard
-  places.
+  so it reports nothing about the software of the operating system itself, whatever the permissions of
+  the agent. What it can match on a Home Assistant device is Python: Home Assistant Core is a Python
+  application, and the agent reports the packages Core runs on (see `inventory_core_packages`), which
+  Wazuh has advisories for. Those findings appear on a manager that has vulnerability detection set
+  up. The Python packages of apps (add-ons) are not included, and the packages of other software in
+  the standard places (dpkg, rpm, apk, npm) are in the inventory only when **Inventory - packages**
+  is on.
 - **Container security.** Wazuh's Docker listener needs Python on the monitored machine, and Home
   Assistant OS has none. Docker's own events are in the journal.
 - **The device's own agent management.** The agent is part of this app's image, so it is updated
@@ -246,8 +250,9 @@ inventory sections and the interval.
 | Option | Purpose |
 | --- | --- |
 | `inventory_host_details` | Report the device's processes, listening ports, user accounts, groups and services (on by default). Only when monitoring the device. |
+| `inventory_core_packages` | Include the Python packages Home Assistant Core runs on in the inventory (on by default). They are what Wazuh's vulnerability detection can match on a Home Assistant device. Only when monitoring the device. |
 | `inventory_ports`, `inventory_processes` | The same for the app's own container; only used when `monitor_host` is off. |
-| `inventory_packages` | Installed packages (dpkg, rpm, apk, Python, npm). See *Limits* for what that means on Home Assistant OS. |
+| `inventory_packages` | Installed packages of the standard package managers (dpkg, rpm, apk) and of Python and npm in their usual places. Home Assistant OS has none of its own (see *Limits*); for the app's own container it lists the Debian packages of its image. |
 
 The rootkit checks for hidden processes and hidden ports are off by default: on a device that runs
 many containers they can raise false alarms. They are meaningful on the device, so turn them on if
@@ -335,11 +340,16 @@ private copy has two things laid over the device's files, and only the agent see
 - the device's account files with one more line each, for the `wazuh` account every Wazuh package
   creates (the agent drops to it), and
 - on ARM, a `/proc/cpuinfo` with the CPU's name added (Wazuh reads the name only from there, and ARM
-  kernels do not print it).
+  kernels do not print it), and
+- an empty `/home` with one folder in it, which Wazuh reads as the place a user keeps Python
+  packages and which leads to the Python packages of Home Assistant Core. Home Assistant OS has no
+  Python of its own; Core is a container, and its file system is reachable through its processes
+  (`/proc/<pid>/root`), read-only as the agent uses it. The app keeps the link current when Core
+  restarts.
 
 Nothing about the device is changed: the app's own data folder is the only thing it writes on it, the
-overlay mounts cannot propagate back (the tests check the real device's account files, `cpuinfo` and
-mount table afterwards), and when the app stops, the agent's processes are stopped with it.
+overlay mounts cannot propagate back (the tests check the real device's account files, `cpuinfo`, `/home`
+and mount table afterwards), and when the app stops, the agent's processes are stopped with it.
 
 The agent's processes are supervised by the app, not by the device: Wazuh's own restart script
 restarts through systemd when it finds one, which on Home Assistant OS would be a restart of a service

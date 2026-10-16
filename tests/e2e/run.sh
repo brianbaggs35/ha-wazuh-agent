@@ -4,7 +4,7 @@
 #   IMAGE=ha-wazuh-agent:test tests/e2e/run.sh [scenario ...]
 #
 # Scenarios: validation enroll journal fim config supervisor ui capabilities upgrade crash duplicate reenroll password
-#            host host_cpu host_control host_unavailable host_apparmor   (default: all)
+#            host host_cpu host_control host_unavailable host_incompatible host_packages host_apparmor   (default: all)
 #   host_apparmor loads the app's AppArmor profile and so only runs where AppArmor is enforced and
 #   sudo is available (GitHub's runners); anywhere else it says so and is skipped.
 #   The first group runs the agent in a plain container (monitor_host off). The host group runs it as
@@ -736,6 +736,8 @@ scenario_host() {
         "$(docker exec "${h}" bash -c 'grep -c "^wazuh:" /etc/group || true')" 0
     check_equal "nothing the app mounted shows in the host's mounts" \
         "$(docker exec "${h}" bash -c 'grep -c "hostview\|hostbin" /proc/self/mountinfo || true')" 0
+    check_equal "the agent's private /home is not mounted on the host" \
+        "$(docker exec "${h}" bash -c 'grep -c " /home " /proc/self/mountinfo || true')" 0
 
     # --- the app restarts, the agent keeps its identity; and stops, leaving nothing behind
     docker restart "${c}" > /dev/null
@@ -855,6 +857,111 @@ CASES
 }
 
 # ---------------------------------------------------------------------------
+scenario_host_packages() {
+    log "host_packages: Home Assistant Core's Python packages are in the inventory, and follow Core when it restarts"
+    local vol="e2e-hpkg-data-${E2E_ID}" h="e2e-hpkg-${E2E_ID}" core="e2e-hpkg-core-${E2E_ID}" c="e2e-hpkg-agent-${E2E_ID}"
+    local name="e2e-hpkg-agent"
+    # A short inventory interval, so a change in Core's packages shows within the test.
+    write_options "${vol}" "{\"monitor_host\": true, \"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", \"inventory_interval\": \"20s\", ${FAST}}"
+    host_start "${h}" "${vol}" || { fail "the stand-in host started"; return 0; }
+    # A stand-in for Home Assistant Core: a process called as Core's is (python3 -m homeassistant), in a
+    # container of its own with the Python packages where the official image keeps them. It holds a
+    # package with a known advisory, so that it is one worth finding.
+    docker run -d --name "${core}" --network "${E2E_NET}" --pid=host debian:bookworm-slim bash -c '
+        site=/usr/local/lib/python3.13/site-packages
+        mkdir -p "${site}/aiohttp-3.9.0.dist-info" "${site}/requests-2.19.0.dist-info"
+        printf "Name: aiohttp\nVersion: 3.9.0\n" > "${site}/aiohttp-3.9.0.dist-info/METADATA"
+        printf "Name: requests\nVersion: 2.19.0\n" > "${site}/requests-2.19.0.dist-info/METADATA"
+        exec -a "python3 -m homeassistant --config /config" sleep infinity' > /dev/null
+    track_container "${core}"
+    host_agent_start "${c}" "${vol}" "${h}"
+    if ! wait_for 180 "agent active" manager_agent_active "${name}"; then
+        fail "the agent enrolled and is Active at the manager"
+        dump_agent "${c}"
+        return 0
+    fi
+    local id
+    id="$(manager_agent_id "${name}")"
+
+    package_in_inventory() { # NAME VERSION -> succeeds when the manager lists that Python package at that version
+        local package="$1" version="$2"
+        manager_api "/syscollector/${id}/packages?search=${package}&limit=5" \
+            | jq -e --arg version "${version}" '.data.affected_items | map(select(.version == $version and .format == "pypi")) | length > 0'
+        return
+    }
+    if wait_for 150 "Core's packages" package_in_inventory aiohttp 3.9.0; then
+        pass "a Python package of Home Assistant Core is in the inventory (aiohttp 3.9.0)"
+    else
+        fail "a Python package of Home Assistant Core is in the inventory (aiohttp 3.9.0)"
+        dump_agent "${c}"
+        return 0
+    fi
+    package_in_inventory requests 2.19.0 > /dev/null \
+        && pass "so are the others" || fail "so are the others"
+    container_log_has "${c}" "Could not mount a /home" \
+        && fail "the agent got a /home for the packages" || pass "the agent got a /home for the packages"
+    check_equal "the host's own /home is untouched (the agent's /home is private)" \
+        "$(docker exec "${h}" bash -c 'ls -A /home | wc -l')" "$(docker run --rm --entrypoint bash debian:bookworm-slim -c 'ls -A /home | wc -l')"
+
+    # Core restarts: it gets a new process, and the packages it has now are the ones to find.
+    local before after
+    before="$(docker exec "${c}" readlink /data/hostview/corepython)"
+    docker restart "${core}" > /dev/null
+    docker exec "${core}" bash -c '
+        site=/usr/local/lib/python3.13/site-packages
+        mkdir -p "${site}/flask-3.0.0.dist-info"
+        printf "Name: flask\nVersion: 3.0.0\n" > "${site}/flask-3.0.0.dist-info/METADATA"'
+    if wait_for 120 "the link follows Core" bash -c "[[ \"\$(docker exec ${c} readlink /data/hostview/corepython)\" != \"${before}\" ]]"; then
+        after="$(docker exec "${c}" readlink /data/hostview/corepython)"
+        pass "after Core restarts the agent's link points at its new process"
+        info "was ${before}, is ${after}"
+    else
+        fail "after Core restarts the agent's link points at its new process"
+    fi
+    wait_for 120 "a package that is new since" package_in_inventory flask 3.0.0 \
+        && pass "the agent sees Core's packages as they are after the restart (flask 3.0.0, installed meanwhile)" \
+        || fail "the agent sees Core's packages as they are after the restart (flask 3.0.0, installed meanwhile)"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+scenario_host_incompatible() {
+    log "host_incompatible: a device whose system cannot run the agent is reported on the status page, not retried silently"
+    local vol="e2e-hinc-data-${E2E_ID}" h="e2e-hinc-${E2E_ID}" c="e2e-hinc-agent-${E2E_ID}" name="e2e-hinc-agent"
+    write_options "${vol}" "{\"monitor_host\": true, \"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", ${FAST}}"
+    # A device without glibc (Alpine uses musl): the loader the Wazuh agent was built for is not there.
+    docker run -d --name "${h}" --hostname haos-musl --network "${E2E_NET}" --pid=host --cap-add SYS_ADMIN \
+        -v "${vol}:${HOST_DATA_PATH}" alpine:3 sh -c 'mount --make-rshared /; touch /tmp/host-ready; exec sleep 100000' > /dev/null
+    track_container "${h}"
+    wait_for 60 "the stand-in host is ready" docker exec "${h}" test -f /tmp/host-ready || { fail "the stand-in host started"; return 0; }
+    host_agent_start "${c}" "${vol}" "${h}"
+
+    if wait_for 120 "the page reports that the agent cannot start" ui_state_is "${h}" needs_host_access; then
+        pass "the status page says host access is needed"
+    else
+        fail "the status page says host access is needed (it says: $(ui_json "${h}" /api/status .state))"
+        dump_agent "${c}"
+        return 0
+    fi
+    check_equal "the reason is that the agent cannot run in the host's system" "$(ui_json "${h}" /api/status .access.reason)" probe_failed
+    [[ "$(ui_json "${h}" /api/status .detail)" == *"could not start in the host's file system"* ]] \
+        && pass "the page says what failed" || fail "the page says what failed"
+    container_log_has "${c}" "No such file or directory" \
+        && pass "the app log shows what the host answered" || fail "the app log shows what the host answered"
+    [[ -z "$(manager_agent_line "${name}")" ]] \
+        && pass "no agent was registered with the manager" || fail "no agent was registered with the manager"
+    local health
+    health="$(docker exec "${c}" wazuh-ha-healthcheck 2>&1)"
+    grep -q 'probe_failed' <<< "${health}" \
+        && pass "the container reports itself unhealthy, for that reason" || fail "the container reports itself unhealthy (${health})"
+    # It keeps trying (a device is fixed by a person, but the app must not give up), and keeps the page up.
+    wait_for 90 "a second attempt" container_log_has_at_least "${c}" "Starting the Wazuh agent daemons." 2 \
+        && pass "the app tries again after a pause" || fail "the app tries again after a pause"
+    check_equal "the status page is still served" "$(ui_code "${h}" /api/status)" 200
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # The app's AppArmor profile is enforced on Home Assistant OS, and cannot be on a development machine
 # whose kernel has AppArmor off, so this runs where it can be (GitHub's runners): the profile is loaded
 # and the agent runs against the stand-in device under it, as the Supervisor would run it.
@@ -923,7 +1030,7 @@ scenario_host_apparmor() {
 # ---------------------------------------------------------------------------
 main() {
     local scenarios=("$@")
-    [[ ${#scenarios[@]} -gt 0 ]] || scenarios=(validation enroll journal fim config supervisor ui capabilities upgrade crash duplicate reenroll password host host_cpu host_control host_unavailable host_apparmor)
+    [[ ${#scenarios[@]} -gt 0 ]] || scenarios=(validation enroll journal fim config supervisor ui capabilities upgrade crash duplicate reenroll password host host_cpu host_control host_unavailable host_incompatible host_packages host_apparmor)
 
     log "image under test: ${IMAGE}   manager: wazuh-manager ${MANAGER_VERSION}"
     # Validation needs no manager; everything else does.

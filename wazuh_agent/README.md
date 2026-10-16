@@ -19,8 +19,8 @@ a protected app has.
 - **File integrity** of your Home Assistant configuration and certificates, the device's `/etc` and
   binaries, the boot partition and root's SSH keys.
 - **System inventory** of the device (hardware including the CPU, operating system, network and its
-  real address, processes, listening ports, accounts and services), **rootkit checks**, and
-  **configuration assessment** with your own policies.
+  real address, processes, listening ports, accounts and services, and the Python packages Home
+  Assistant Core runs on), **rootkit checks**, and **configuration assessment** with your own policies.
 - Any **log file or command output** you add.
 
 ## A status page in the sidebar

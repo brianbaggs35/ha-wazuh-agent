@@ -184,6 +184,7 @@ options:
   inventory_ports: false
   inventory_processes: false
   inventory_host_details: true
+  inventory_core_packages: true
 
   # Response and advanced
   active_response_enabled: false
@@ -312,6 +313,7 @@ schema:
   inventory_ports: bool
   inventory_processes: bool
   inventory_host_details: bool
+  inventory_core_packages: bool
 
   active_response_enabled: bool
   allow_remote_commands: bool

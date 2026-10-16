@@ -398,6 +398,12 @@ configuration:
     description: >-
       Processes of this app's container. Used only when not monitoring the host; for the host,
       Inventory - host details decides.
+  inventory_core_packages:
+    name: Inventory - Home Assistant Core's Python packages
+    description: >-
+      Include the Python packages Home Assistant Core runs on in the inventory. Home Assistant OS itself
+      has no package manager for Wazuh's vulnerability detection to match, but Core's dependencies are
+      Python packages it has advisories for. Only when monitoring the host.
   inventory_host_details:
     name: Inventory - host details
     description: >-

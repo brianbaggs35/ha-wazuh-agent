@@ -37,6 +37,21 @@ if [ -f "${view}/cpuinfo" ]; then
     "${busybox}" mount --bind "${view}/cpuinfo" /proc/cpuinfo
 fi
 
+# Home Assistant OS has no package manager, so there is nothing of the host's for vulnerability detection
+# to match. Home Assistant Core's Python packages are what it can match, and Wazuh looks for Python
+# packages only in fixed places, one of which is /home/USER/.local/lib/pythonX/*-packages. The host's /home
+# is an empty directory, so the agent is given one with that place in it, linked to the folder the app
+# keeps pointed at Core's packages (see core_python in wazuh-ha-host). Without a /home to put it on, or
+# without the packages, the agent runs as it would anyway.
+if [ -f "${view}/corepython.enabled" ] && [ -d /home ]; then
+    if "${busybox}" mount -t tmpfs -o mode=0755,size=64k tmpfs /home; then
+        "${busybox}" mkdir -p /home/homeassistant/.local/lib/python3
+        "${busybox}" ln -s "${view}/corepython" /home/homeassistant/.local/lib/python3/site-packages
+    else
+        echo "Could not mount a /home for Home Assistant Core's Python packages; they will not be inventoried."
+    fi
+fi
+
 cd "${home}"
 
 # Start the daemons in the order given, as wazuh-control does, and wait for each to write its PID
@@ -51,7 +66,7 @@ for daemon in "$@"; do
     started=0
     while [ "${started}" -eq 0 ]; do
         for pidfile in var/run/"${daemon}"-*.pid; do
-            if [ -e "${pidfile}" ] && kill -0 "$(cat "${pidfile}")" 2> /dev/null; then
+            if [ -e "${pidfile}" ] && kill -0 "$("${busybox}" cat "${pidfile}")" 2> /dev/null; then
                 started=1
             fi
         done

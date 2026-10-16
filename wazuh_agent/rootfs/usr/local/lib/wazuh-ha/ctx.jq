@@ -225,7 +225,10 @@ $o[0] as $o
       hardware:      (opt("inventory_hardware"; true) | yn),
       os:            (opt("inventory_os"; true) | yn),
       network:       (opt("inventory_network"; true) | yn),
-      packages:      (opt("inventory_packages"; false) | yn),
+      # On the host the packages of Home Assistant Core are what vulnerability detection can use (see
+      # core_python in wazuh-ha-host), so they are wanted unless the option says no; a Linux host's own
+      # (dpkg, rpm) are in the inventory as soon as the packages switch is on.
+      packages:      ((opt("inventory_packages"; false) or (host_mode and opt("inventory_core_packages"; true))) | yn),
       # In the host's file system these describe the device, not a container, and are what a Wazuh agent
       # reports on any Linux machine: one switch for processes, listening ports, users, groups and
       # services. In the container the old options still decide, and users, groups and services stay off.

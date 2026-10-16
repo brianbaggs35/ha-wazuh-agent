@@ -44,6 +44,8 @@ is the app's [documentation](wazuh_agent/DOCS.md).
 - Watches the Home Assistant **configuration and certificates**, the device's `/etc` and binaries, the
   boot partition and root's SSH keys for changes, without ever sending the content of secrets.
 - Runs **rootkit checks**, and configuration assessment with your own policies, against the device.
+- Inventories the **Python packages Home Assistant Core runs on**, which is what Wazuh's vulnerability
+  detection can match on a device with no package manager of its own.
 - Labels every event with the Home Assistant OS, Core and Supervisor versions.
 - A read-only **Wazuh Agent** status page in the Home Assistant sidebar: running or stopped,
   connected or not, registration, update availability, a connection test and the agent log.
