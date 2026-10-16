@@ -1,6 +1,6 @@
 {
   "name": "wazuh-agent-status",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "Read-only status page for the Wazuh Agent Home Assistant app",
   "type": "module",

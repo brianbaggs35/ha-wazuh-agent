@@ -205,6 +205,56 @@ func TestBuildStatusWhenTheFileCannotBeStatted(t *testing.T) {
 	}
 }
 
+const accessHost = `{"scope":"host","available":true}`
+
+func TestBuildStatusReportsWhereTheAgentRuns(t *testing.T) {
+	status := BuildStatus(files(true, map[string]string{"access.json": accessHost}), epoch)
+	if status.State != "running" {
+		t.Errorf("host monitoring that works is just a running agent: %q", status.State)
+	}
+	if status.Access == nil || status.Access.Scope != "host" || !status.Access.Available {
+		t.Errorf("access: %+v", status.Access)
+	}
+}
+
+func TestBuildStatusNeedsHostAccess(t *testing.T) {
+	const blocked = `{"scope":"host","available":false,"reason":"protection_mode","message":"Turn Protection mode off."}`
+	// Files left by an earlier run must not hide the reason: nothing is running, and this is why.
+	for name, fsys := range map[string]fstest.MapFS{
+		"nothing else published": {"access.json": {Data: []byte(blocked)}, "summary.json": {Data: []byte(summaryJSON)}},
+		"stale files of a run":   files(false, map[string]string{"access.json": blocked}),
+		"fresh files of a run":   files(true, map[string]string{"access.json": blocked}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			status := BuildStatus(fsys, epoch)
+			if status.State != "needs_host_access" || status.Headline != "Host access is needed" || status.Detail != "Turn Protection mode off." {
+				t.Errorf("got %s / %s / %s", status.State, status.Headline, status.Detail)
+			}
+			if status.Access == nil || status.Access.Reason != "protection_mode" || status.Access.Available {
+				t.Errorf("access: %+v", status.Access)
+			}
+		})
+	}
+	withSummary := BuildStatus(fstest.MapFS{"access.json": {Data: []byte(blocked)}, "summary.json": {Data: []byte(summaryJSON)}}, epoch)
+	if withSummary.Summary == nil || withSummary.Summary.Agent.Name != "homeassistant" {
+		t.Errorf("the page still shows what is configured: %+v", withSummary.Summary)
+	}
+}
+
+func TestBuildStatusNeedsHostAccessWithoutAMessage(t *testing.T) {
+	status := BuildStatus(fstest.MapFS{"access.json": {Data: []byte(`{"scope":"host","available":false}`)}}, epoch)
+	if status.State != "needs_host_access" || !strings.Contains(status.Detail, "app log") {
+		t.Errorf("a reason the app did not give still needs a sentence: %q", status.Detail)
+	}
+}
+
+func TestBuildStatusIgnoresAnUnreadableAccessFile(t *testing.T) {
+	status := BuildStatus(files(true, map[string]string{"access.json": "{broken"}), epoch)
+	if status.Access != nil || status.State != "running" {
+		t.Errorf("a broken access file must be ignored: %+v / %s", status.Access, status.State)
+	}
+}
+
 func TestParseLogTail(t *testing.T) {
 	if got := ParseLogTail(""); len(got) != 0 {
 		t.Errorf("empty log: %v", got)

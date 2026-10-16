@@ -17,6 +17,7 @@ const (
 	fileState    = "agentd.state"
 	fileIdentity = "identity.json"
 	fileSummary  = "summary.json"
+	fileAccess   = "access.json"
 	fileLog      = "log.txt"
 
 	// How old the published files may be before the status is reported as stale.
@@ -84,6 +85,17 @@ type SummaryApp struct {
 	Version string `json:"version"`
 }
 
+// Access says where the agent was asked to run and whether it can. Scope is "host" (the Home
+// Assistant OS device itself) or "container" (only this app's own). Available is false when the agent
+// was not started because the host cannot be reached (Protection mode is on, ...): Reason is a short
+// code and Message a sentence the user can act on.
+type Access struct {
+	Scope     string `json:"scope"`
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
+	Message   string `json:"message,omitempty"`
+}
+
 // Status is the one document the page renders.
 type Status struct {
 	State        string       `json:"state"`
@@ -94,6 +106,7 @@ type Status struct {
 	Connection   Connection   `json:"connection"`
 	Registration Registration `json:"registration"`
 	Summary      *Summary     `json:"summary,omitempty"`
+	Access       *Access      `json:"access,omitempty"`
 }
 
 // ParseDaemons reads `wazuh-control status` output: "<daemon> is running..." / "<daemon> not running...".
@@ -168,7 +181,16 @@ func ParseIdentity(data []byte) Registration {
 
 // BuildStatus assembles the status from the published files.
 func BuildStatus(fsys fs.FS, now time.Time) Status {
-	status := Status{Daemons: []Daemon{}}
+	status := Status{Daemons: []Daemon{}, Access: readAccess(fsys)}
+
+	// An agent that was never started, because the host it was asked to monitor cannot be reached, has
+	// nothing else to show: say what is needed, ahead of everything that is only a symptom of it.
+	if status.Access != nil && !status.Access.Available {
+		status.State, status.Headline = "needs_host_access", "Host access is needed"
+		status.Detail = valueOr(status.Access.Message, "The agent could not be started on the Home Assistant OS host. Check the app log.")
+		status.Summary = readSummary(fsys)
+		return status
+	}
 
 	daemonsText, err := fs.ReadFile(fsys, fileDaemons)
 	if err != nil {
@@ -209,6 +231,18 @@ func sortDaemons(daemons []Daemon) {
 			daemons[j], daemons[j-1] = daemons[j-1], daemons[j]
 		}
 	}
+}
+
+func readAccess(fsys fs.FS) *Access {
+	data, err := fs.ReadFile(fsys, fileAccess)
+	if err != nil {
+		return nil
+	}
+	var access Access
+	if err := json.Unmarshal(data, &access); err != nil {
+		return nil
+	}
+	return &access
 }
 
 func readSummary(fsys fs.FS) *Summary {
