@@ -4,7 +4,8 @@
 
 What it guards:
   * every option has a default that satisfies its own schema, and a UI translation
-  * the privileges the app asks for keep the Supervisor security rating at its maximum
+  * the privileges the app asks for are exactly the reviewed list that lets the agent monitor the
+    Home Assistant OS host (and so the security rating is the one that list gives)
   * versions, the pinned base image and the pinned Wazuh signing key are consistent
 """
 
@@ -19,9 +20,15 @@ import yaml
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 APP = ROOT / "wazuh_agent"
 
-# The rating this app is designed to have. Lowering it is a deliberate decision:
-# change this number in the same pull request and say why.
-MINIMUM_RATING = 8
+# The app is the Wazuh agent of the Home Assistant OS device itself, so it asks for access to the host: its process
+# namespace, network and host name, and the capabilities to enter its file system. That is what the
+# rating below pays for, and DOCS.md says so. Anything beyond this list is a decision to make in a pull request,
+# with a reason: change the list and the number together.
+HOST_ACCESS = {"host_network": True, "host_pid": True, "host_uts": True}
+PRIVILEGED = {"SYS_ADMIN", "SYS_PTRACE"}
+# 5, +1 AppArmor profile, +2 ingress; -1 for the privileged capabilities, -1 host_network, -2 host_pid,
+# and -1 for host_uts together with SYS_ADMIN.
+MINIMUM_RATING = 3
 
 errors: list[str] = []
 
@@ -176,14 +183,28 @@ def check_security(config: dict) -> None:
     if rating < MINIMUM_RATING:
         err(f"security rating is {rating}, below the required {MINIMUM_RATING}")
 
-    for key in ("full_access", "docker_api", "host_pid", "host_network", "host_ipc", "host_uts", "privileged",
-                "kernel_modules", "devices", "usb", "uart", "gpio", "ports"):
+    for key, value in HOST_ACCESS.items():
+        if config.get(key) is not value:
+            err(f"config.yaml must set {key}: {value}: the agent monitors the host, not its own container")
+    if set(config.get("privileged") or []) != PRIVILEGED:
+        err(f"privileged must be exactly {sorted(PRIVILEGED)}: SYS_PTRACE to read the host's namespaces, "
+            "SYS_ADMIN to enter its mount namespace")
+    for key in ("full_access", "docker_api", "host_ipc", "host_dbus", "kernel_modules", "devices", "usb", "uart",
+                "gpio", "ports"):
         if config.get(key):
-            err(f"config.yaml sets {key}: this app is designed not to need it (see the security notes in DOCS.md)")
+            err(f"config.yaml sets {key}: the app does not need it, and it would cost more than the reviewed "
+                "access (see the security notes in DOCS.md)")
     if config.get("hassio_role", "default") != "default":
         err("hassio_role must stay 'default': the app only reads Supervisor info")
     if config.get("apparmor") is False:
         err("apparmor must not be disabled")
+    # s6-overlay cannot run in the host's process namespace (Home Assistant documents this), so the app
+    # supervises itself; Docker's own init stays on.
+    if config.get("init") is False:
+        err("init must not be false: the app has no s6-overlay, and relies on Docker's init")
+    # The app shares the host's network, where a fixed ingress port could already be in use.
+    if config.get("ingress_port") != 0:
+        err("ingress_port must be 0 (the Supervisor assigns it), because the app is on the host network")
     # The status page: an ingress panel named "Wazuh Agent". Ingress is the one thing that must be
     # on; a published port would cost the rating, and is forbidden above.
     if config.get("ingress") is not True:
@@ -223,6 +244,8 @@ def check_versions(config: dict) -> None:
         builder = re.search(rf"^FROM (\S+) AS {stage}$", dockerfile, re.MULTILINE)
         if not builder or not re.search(r"@sha256:[0-9a-f]{64}$", builder.group(1)):
             err(f"Dockerfile: the {stage} builder image must be pinned by digest")
+    if 'ENTRYPOINT ["/usr/local/bin/wazuh-ha-entrypoint"]' not in dockerfile:
+        err("Dockerfile: the entrypoint must be /usr/local/bin/wazuh-ha-entrypoint (the app supervises itself)")
     wazuh = re.search(r"^ARG WAZUH_VERSION=(\S+)", dockerfile, re.MULTILINE)
     if not wazuh or not SEMVER.match(wazuh.group(1)):
         err("Dockerfile: ARG WAZUH_VERSION must be a plain version such as 4.14.9")
@@ -236,7 +259,8 @@ def check_versions(config: dict) -> None:
 
 def check_files(config: dict) -> None:
     for name in ("README.md", "DOCS.md", "CHANGELOG.md", "icon.png", "logo.png", "apparmor.txt", "Dockerfile",
-                 "ui/server/go.mod", "ui/web/package-lock.json"):
+                 "ui/server/go.mod", "ui/web/package-lock.json", "rootfs/usr/local/bin/wazuh-ha-entrypoint",
+                 "rootfs/usr/local/bin/wazuh-ha-host", "rootfs/usr/local/lib/wazuh-ha/hostns-start"):
         if not (APP / name).is_file():
             err(f"wazuh_agent/{name} is missing")
     repo = ROOT / "repository.yaml"

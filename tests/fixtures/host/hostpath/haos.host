@@ -1,0 +1,6 @@
+20 1 259:8 / /mnt/data rw,relatime shared:5 - ext4 /dev/disk/by-label/hassos-data rw,commit=30
+21 20 259:8 /docker /var/lib/docker rw,relatime shared:5 - ext4 /dev/disk/by-label/hassos-data rw,commit=30
+22 20 259:8 /logs /var/log/journal rw,relatime shared:5 - ext4 /dev/disk/by-label/hassos-data rw,commit=30
+30 1 259:7 / /mnt/overlay rw,relatime shared:9 - ext4 /dev/disk/by-label/hassos-overlay rw
+31 1 259:7 /root/.ssh /root/.ssh rw,relatime shared:9 - ext4 /dev/disk/by-label/hassos-overlay rw
+32 1 259:9 / /mnt/boot rw,sync,relatime shared:11 - vfat /dev/disk/by-label/hassos-boot rw

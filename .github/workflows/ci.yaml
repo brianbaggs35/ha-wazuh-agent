@@ -6,10 +6,12 @@ name: CI
 #                 Assistant app linter, and the config guard (options, translations, security rating)
 #   unit-tests    every language's unit tests (Python, Go, web) with a 100% coverage floor
 #   build         the image is built once; every later job tests exactly these bits
-#   render-tests  the configuration renderer, with every Wazuh daemon checking its output
+#   render-tests  the configuration renderer, with every Wazuh daemon checking its output, and the helpers
+#                 that find the host's paths and name an ARM CPU
 #   e2e           the image against a REAL Wazuh manager: enrollment, persistence, journal, file
-#                 integrity, passwords. amd64 against two manager versions, and arm64 natively
-#                 (the Raspberry Pi architecture)
+#                 integrity, passwords, and the agent running against a stand-in for the Home Assistant
+#                 OS device (what the manager records is the device's, not the container's). amd64
+#                 against two manager versions, and arm64 natively (the Raspberry Pi architecture)
 #   trivy         vulnerability, misconfiguration and secret scans plus an SBOM
 #   sonarqube     SonarQube Cloud analysis (code quality and security) with Python coverage
 # A nightly run catches new CVEs and new Wazuh or base-image releases without a code change.
@@ -60,10 +62,10 @@ jobs:
         run: |
           shopt -s nullglob
           shellcheck -x \
-            tests/e2e/run.sh tests/e2e/lib/*.sh tests/render/*.sh \
+            tests/e2e/run.sh tests/e2e/lib/*.sh tests/render/*.sh tests/host/*.sh \
             wazuh_agent/rootfs/usr/local/bin/* \
-            wazuh_agent/rootfs/etc/s6-overlay/s6-rc.d/*/run \
-            wazuh_agent/rootfs/etc/s6-overlay/s6-rc.d/*/finish \
+            wazuh_agent/rootfs/usr/local/lib/wazuh-ha/hostns-start \
+            wazuh_agent/rootfs/usr/local/lib/wazuh-ha/restart-wazuh \
             scripts/*.sh scripts/ci/*.sh
 
       - name: Dockerfile
@@ -192,6 +194,11 @@ jobs:
           "${RUNNER_TEMP}/venv/bin/pip" install --quiet "pyyaml==${PYYAML_VERSION}"
           PATH="${RUNNER_TEMP}/venv/bin:${PATH}" tests/render/run.sh
 
+      # Where the host keeps the app's folders, what an ARM CPU is called, and whether the host can be
+      # reached, each against the shipped image.
+      - name: Host helper tests
+        run: tests/host/run.sh
+
   e2e:
     name: E2E amd64 (manager ${{ matrix.manager }})
     needs: build
@@ -252,6 +259,9 @@ jobs:
           python3 -m venv "${RUNNER_TEMP}/venv"
           "${RUNNER_TEMP}/venv/bin/pip" install --quiet "pyyaml==${PYYAML_VERSION}"
           PATH="${RUNNER_TEMP}/venv/bin:${PATH}" tests/render/run.sh
+
+      - name: Host helper tests
+        run: tests/host/run.sh
 
       - name: End-to-end tests
         run: tests/e2e/run.sh

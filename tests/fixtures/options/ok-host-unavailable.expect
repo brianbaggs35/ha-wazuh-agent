@@ -1,0 +1,6 @@
+has: >/homeassistant</directories>
+no: >/mnt/data/supervisor/homeassistant</directories>
+no: >/etc</directories>
+no: <ignore>/mnt/data</ignore>
+has: <users>no</users>
+has: <ports all="yes">yes</ports>

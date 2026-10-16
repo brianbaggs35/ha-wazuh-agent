@@ -208,11 +208,15 @@ container_log_matches() {
 # ---- The app under test ----------------------------------------------------
 
 # write_options VOLUME JSON   puts /data/options.json into the app's data volume
+#
+# The app monitors the Home Assistant OS host unless told otherwise, which needs the host's process
+# namespace (see host_agent_start). Most scenarios test the agent itself in a plain container, so
+# "monitor_host" is false unless the options say otherwise.
 write_options() {
     local volume="$1" json="$2"
     docker volume create "${volume}" > /dev/null
     track_volume "${volume}"
-    printf '%s' "${json}" | docker run --rm -i -v "${volume}:/data" --entrypoint bash "${IMAGE}" \
+    printf '%s' "${json}" | jq -c '{monitor_host: false} + .' | docker run --rm -i -v "${volume}:/data" --entrypoint bash "${IMAGE}" \
         -c 'cat > /data/options.json'
     return
 }
@@ -222,7 +226,8 @@ agent_start() {
     local name="$1" volume="$2"
     shift 2
     docker rm -f "${name}" > /dev/null 2>&1 || true
-    docker run -d --name "${name}" --network "${E2E_NET}" -v "${volume}:/data" "$@" "${IMAGE}" > /dev/null
+    # --init: Home Assistant starts an app under Docker's init unless the app opts out.
+    docker run -d --init --name "${name}" --network "${E2E_NET}" -v "${volume}:/data" "$@" "${IMAGE}" > /dev/null
     track_container "${name}"
     return 0
 }

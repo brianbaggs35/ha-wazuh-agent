@@ -3,7 +3,10 @@
 #
 #   IMAGE=ha-wazuh-agent:test tests/e2e/run.sh [scenario ...]
 #
-# Scenarios: validation enroll journal fim config supervisor ui capabilities upgrade crash duplicate reenroll password   (default: all)
+# Scenarios: validation enroll journal fim config supervisor ui capabilities upgrade crash duplicate reenroll password
+#            host host_cpu host_control host_unavailable   (default: all)
+#   The first group runs the agent in a plain container (monitor_host off). The host group runs it as
+#   it runs in Home Assistant, against a stand-in for the Home Assistant OS device (see lib/host.sh).
 # Environment: IMAGE (image under test), MANAGER_VERSION (default 4.14.9),
 #              E2E_KEEP=1 to leave containers behind for debugging.
 set -uo pipefail
@@ -13,6 +16,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${HERE}/lib/common.sh"
 # shellcheck source=lib/journal.sh
 source "${HERE}/lib/journal.sh"
+# shellcheck source=lib/host.sh
+source "${HERE}/lib/host.sh"
 
 [[ -n "${E2E_KEEP:-}" ]] || trap cleanup EXIT
 
@@ -604,9 +609,253 @@ scenario_capabilities() {
 }
 
 # ---------------------------------------------------------------------------
+# The app is the Wazuh agent of the Home Assistant OS device, not of its own container. The next
+# scenarios run it against a stand-in for that device (lib/host.sh) and compare what the real Wazuh
+# manager records with what the stand-in is, and with what the app's container is.
+
+# The id of a Wazuh agent by name, once it has been enrolled for long enough to have an inventory.
+HOST_HELPER_PATH="local_wazuh_agent/ossec/bin/"
+
+scenario_host() {
+    log "host: what the manager records about the agent is the host's, not the container's"
+    local vol="e2e-host-data-${E2E_ID}" cfg="e2e-host-cfg-${E2E_ID}" ssl="e2e-host-ssl-${E2E_ID}"
+    local jvol="e2e-host-jvol-${E2E_ID}" jw="e2e-host-jw-${E2E_ID}"
+    local h="e2e-host-${E2E_ID}" c="e2e-host-agent-${E2E_ID}" name="e2e-host-agent"
+    track_volume "${cfg}"
+    track_volume "${ssl}"
+    track_volume "${jvol}"
+    track_container "${jw}"
+    docker volume create "${cfg}" > /dev/null
+    docker volume create "${ssl}" > /dev/null
+    journal_writer_start "${jw}" "${jvol}" "${JOURNAL_MID}" || { fail "the journal writer started"; return 0; }
+    write_options "${vol}" "{\"monitor_host\": true, \"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", ${FAST}}"
+    host_start "${h}" "${vol}" -e "HOST_MACHINE_ID=${JOURNAL_MID}" \
+        -v "${cfg}:/mnt/data/supervisor/homeassistant" -v "${ssl}:/mnt/data/supervisor/ssl" -v "${jvol}:/var/log/journal:ro" \
+        || { fail "the stand-in host started"; return 0; }
+    # The folders Home Assistant maps into the app are the same folders as the host's.
+    host_agent_start "${c}" "${vol}" "${h}" -v "${cfg}:/homeassistant:ro" -v "${ssl}:/ssl:ro" -v "${jvol}:/var/log/journal:ro"
+
+    if wait_for 180 "agent active" manager_agent_active "${name}"; then
+        pass "the agent enrolled and is Active at the manager"
+    else
+        fail "the agent enrolled and is Active at the manager"
+        dump_agent "${c}"
+        return 0
+    fi
+    host_settle "${c}"
+    local id host_ip image_os
+    id="$(manager_agent_id "${name}")"
+    host_ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${h}")"
+    image_os="$(docker run --rm --entrypoint sed "${IMAGE}" -n 's/^PRETTY_NAME="\(.*\)"$/\1/p' /etc/os-release)"
+
+    # --- where the agent runs
+    container_log_has "${c}" "The agent will run in the host's file system" \
+        && pass "the app says the agent runs in the host's file system" || fail "the app says the agent runs in the host's file system"
+    check_equal "the agent daemon runs from the host's own path of the app's data" \
+        "$(docker exec "${c}" bash -c 'readlink /proc/$(cat /var/ossec/var/run/wazuh-agentd-*.pid)/exe')" \
+        "${HOST_DATA_PATH}/ossec/bin/wazuh-agentd"
+    check_different "the daemons are not in the app container's mount namespace" \
+        "$(docker exec "${c}" bash -c 'readlink /proc/$(cat /var/ossec/var/run/wazuh-agentd-*.pid)/ns/mnt')" \
+        "$(docker exec "${c}" readlink /proc/self/ns/mnt)"
+    check_equal "the app translates its own folders to the host's" \
+        "$(docker exec "${c}" wazuh-ha-host path /homeassistant)" "/mnt/data/supervisor/homeassistant"
+
+    # --- what the manager records about this agent
+    check_equal "the agent's address is the host's (${host_ip})" \
+        "$(manager_item "/agents?q=name=${name}&select=ip" '.ip')" "${host_ip}"
+    check_equal "the agent's operating system is the host's (${HOST_OS_NAME})" \
+        "$(manager_item "/agents?q=name=${name}&select=os.name" '.os.name')" "${HOST_OS_NAME}"
+    check_different "... and not the container image's (${image_os})" \
+        "$(manager_item "/agents?q=name=${name}&select=os.name" '.os.name')" "${image_os}"
+    check_equal "the inventory's operating system is the host's" \
+        "$(manager_item "/syscollector/${id}/os" '.os.name + " " + .os.version + " (" + .os.platform + ")"')" \
+        "${HOST_OS_NAME} ${HOST_OS_VERSION} (haos)"
+    check_equal "the inventory's host name is the host's" \
+        "$(manager_item "/syscollector/${id}/os" '.hostname')" "${HOST_HOSTNAME}"
+    check_different "the inventory names the CPU (a real name on x86, a worked-out one on ARM)" \
+        "$(manager_item "/syscollector/${id}/hardware" '.cpu.name')" "-"
+
+    # --- the processes and ports of the whole device, not of the app's container
+    [[ "$(manager_api "/syscollector/${id}/processes?search=perl&limit=1" | jq -r '.data.total_affected_items')" -ge 1 ]] \
+        && pass "the host's own processes are in the inventory" || fail "the host's own processes are in the inventory"
+    [[ "$(manager_api "/syscollector/${id}/processes?search=wazuh-analysisd&limit=1" | jq -r '.data.total_affected_items')" -ge 1 ]] \
+        && pass "so are the processes of other containers on the device (the manager's)" \
+        || fail "so are the processes of other containers on the device (the manager's)"
+    check_equal "the host's listening port 4242 is in the inventory, with the process that opened it" \
+        "$(manager_api "/syscollector/${id}/ports?search=perl" | jq -r '[.data.affected_items[] | select(.local.port == 4242) | .process] | first')" "perl"
+    local accounts
+    accounts="$(manager_api "/syscollector/${id}/users?limit=500" | jq -r '[.data.affected_items[].user.name] | join(" ")')"
+    [[ " ${accounts} " == *" root "* && " ${accounts} " == *" wazuh "* ]] \
+        && pass "the host's accounts are in the inventory, with the wazuh account the agent runs as" \
+        || fail "the host's accounts are in the inventory, with the wazuh account the agent runs as (got: ${accounts})"
+    [[ " ${accounts} " != *" wazuhui "* ]] \
+        && pass "the app container's own accounts are not" || fail "the app container's own accounts are not"
+
+    # --- file integrity of the host's own files, under the host's own paths
+    docker exec "${h}" bash -c '
+        echo "X11Forwarding yes" >> /etc/ssh/sshd_config
+        echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIe2eFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF intruder" >> /root/.ssh/authorized_keys
+        echo "homeassistant:" > /mnt/data/supervisor/homeassistant/configuration.yaml'
+    local path
+    for path in /etc/ssh/sshd_config /root/.ssh/authorized_keys /mnt/data/supervisor/homeassistant/configuration.yaml; do
+        if wait_for 90 "FIM alert ${path}" manager_has_alert_path "${path}"; then
+            pass "file integrity alert for the host's ${path}"
+        else
+            fail "file integrity alert for the host's ${path}"
+        fi
+    done
+    [[ "$(manager_alert_count '"path":"/homeassistant/')" == 0 ]] \
+        && pass "no alert carries the app's own path of the Home Assistant folder" \
+        || fail "no alert carries the app's own path of the Home Assistant folder"
+
+    # --- the host's journal
+    journal_emit "${jw}" sshd 5 "Failed password for invalid user e2ehost from 192.0.2.31 port 4001 ssh2"
+    wait_for 90 "journal event" manager_has_archive 192.0.2.31 \
+        && pass "an event of the host's journal reached the manager" || fail "an event of the host's journal reached the manager"
+
+    # --- the restart Wazuh asked for was done by the app, not through systemd
+    docker exec "${c}" grep -q 'ask the app' /var/ossec/active-response/bin/restart.sh \
+        && pass "Wazuh's restart.sh is the app's, which asks the app to restart the agent" \
+        || fail "Wazuh's restart.sh is the app's, which asks the app to restart the agent"
+    docker exec "${h}" test ! -s /tmp/systemctl.log \
+        && pass "the host's systemctl was never asked to restart anything" || fail "the host's systemctl was never asked to restart anything"
+
+    # --- the status page
+    local status
+    status="$(ui_get "${h}" /api/status)"
+    check_equal "the page reports the agent as running" "$(jq -r .state <<< "${status}")" running
+    check_equal "the page says the agent monitors the host" "$(jq -r .access.scope <<< "${status}")" host
+    check_equal "and shows the host's name" "$(jq -r .summary.host.scope <<< "${status}")" host
+
+    # --- the host itself was left alone
+    check_equal "no wazuh account was added to the host's /etc/passwd" \
+        "$(docker exec "${h}" bash -c 'grep -c "^wazuh:" /etc/passwd || true')" 0
+    check_equal "no wazuh group was added to the host's /etc/group" \
+        "$(docker exec "${h}" bash -c 'grep -c "^wazuh:" /etc/group || true')" 0
+    check_equal "nothing the app mounted shows in the host's mounts" \
+        "$(docker exec "${h}" bash -c 'grep -c "hostview\|hostbin" /proc/self/mountinfo || true')" 0
+
+    # --- the app restarts, the agent keeps its identity; and stops, leaving nothing behind
+    docker restart "${c}" > /dev/null
+    assert "the agent reconnects after the app restarts" wait_for 180 "reconnected" docker exec "${c}" wazuh-ha-healthcheck
+    check_equal "the agent kept its manager-side identity" "$(manager_agent_id "${name}")" "${id}"
+    docker stop "${c}" > /dev/null
+    check_equal "stopping the app stops every daemon it started on the host" \
+        "$(docker run --rm --pid=host --cap-add SYS_PTRACE --entrypoint bash "${IMAGE}" -c \
+            "for p in /proc/[0-9]*; do readlink \$p/exe 2> /dev/null; done | grep -c '${HOST_HELPER_PATH}' || true")" 0
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+scenario_host_cpu() {
+    log "host_cpu: an ARM CPU, which Wazuh cannot name by itself, is named in the inventory"
+    local vol="e2e-hcpu-data-${E2E_ID}" h="e2e-hcpu-${E2E_ID}" c="e2e-hcpu-agent-${E2E_ID}" name="e2e-hcpu-agent"
+    local sample="${HERE}/../fixtures/host/cpuname/rpi5.cpuinfo"
+    write_options "${vol}" "{\"monitor_host\": true, \"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", ${FAST}}"
+    host_start "${h}" "${vol}" || { fail "the stand-in host started"; return 0; }
+    # A Raspberry Pi 5's /proc/cpuinfo, which has no "model name", whatever machine the test runs on.
+    host_agent_start "${c}" "${vol}" "${h}" -v "${sample}:/cpuinfo-sample:ro" \
+        -e WAZUH_HA_CPUINFO=/cpuinfo-sample -e WAZUH_HA_BOARD_FILE=/nonexistent
+    if ! wait_for 180 "agent active" manager_agent_active "${name}"; then
+        fail "the agent enrolled and is Active at the manager"
+        dump_agent "${c}"
+        return 0
+    fi
+    local id
+    id="$(manager_agent_id "${name}")"
+    check_equal "the inventory names the Raspberry Pi 5's CPU, which its kernel does not" \
+        "$(manager_item "/syscollector/${id}/hardware" '.cpu.name')" "Cortex-A76 (Raspberry Pi 5 Model B Rev 1.0)"
+    check_equal "and counts its four cores" "$(manager_item "/syscollector/${id}/hardware" '.cpu.cores')" 4
+    check_equal "the host's own /proc/cpuinfo was not changed" \
+        "$(docker exec "${h}" bash -c 'grep -c "Cortex" /proc/cpuinfo || true')" 0
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+scenario_host_control() {
+    log "host_control: without host monitoring the manager records the container, so the host checks above mean something"
+    local vol="e2e-hctl-data-${E2E_ID}" c="e2e-hctl-${E2E_ID}" name="e2e-hctl"
+    write_options "${vol}" "{\"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", ${FAST}}"
+    agent_start "${c}" "${vol}"
+    if ! wait_for 150 "agent active" manager_agent_active "${name}"; then
+        fail "the agent enrolled and is Active at the manager"
+        dump_agent "${c}"
+        return 0
+    fi
+    local id container_ip os_name
+    id="$(manager_agent_id "${name}")"
+    container_ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${c}")"
+    os_name="$(manager_item "/syscollector/${id}/os" '.os.name')"
+    check_equal "the agent's address is the container's" "$(manager_item "/agents?q=name=${name}&select=ip" '.ip')" "${container_ip}"
+    [[ "${os_name}" == *Debian* ]] && pass "the operating system is the container image's (${os_name})" \
+        || fail "the operating system is the container image's (${os_name})"
+    check_different "... and not the host's" "${os_name}" "${HOST_OS_NAME}"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+scenario_host_unavailable() {
+    log "host_unavailable: when the host cannot be reached nothing runs, and the status page and the log say why"
+    # A stand-in Supervisor that answers for this app: its protection mode is whatever the file says.
+    local sup="e2e-hu-sup-${E2E_ID}" web="e2e-hu-web-${E2E_ID}"
+    track_container "${sup}"
+    track_volume "${web}"
+    docker volume create "${web}" > /dev/null
+    set_protection() {
+        local protected="$1"
+        docker run --rm -v "${web}:/www" --entrypoint bash "${IMAGE}" -c "
+            mkdir -p /www/addons/self
+            echo '{\"result\": \"ok\", \"data\": {\"hostname\": \"homeassistant\", \"operating_system\": \"Home Assistant OS 17.0\"}}' > /www/info
+            echo '{\"result\": \"ok\", \"data\": {\"version\": \"9.9.9\", \"protected\": ${protected}}}' > /www/addons/self/info"
+        return 0
+    }
+    set_protection true
+    docker run -d --name "${sup}" --network "${E2E_NET}" --network-alias supervisor \
+        -v "${web}:/www:ro" busybox:stable httpd -f -p 80 -h /www > /dev/null
+
+    local case_name vol c extra reason expect health
+    # NAME|extra docker options|reason the page must give|text the message must contain
+    while IFS='|' read -r case_name extra reason expect; do
+        vol="e2e-hu-${case_name}-${E2E_ID}"
+        c="e2e-hu-${case_name}-c-${E2E_ID}"
+        [[ "${case_name}" == restart ]] && set_protection false
+        write_options "${vol}" "{\"monitor_host\": true, \"manager_address\": \"${MANAGER}\", \"agent_name\": \"e2e-hu-${case_name}\", ${FAST}}"
+        # shellcheck disable=SC2086
+        agent_start "${c}" "${vol}" -e SUPERVISOR_TOKEN=e2e-token -e WAZUH_UI_ALLOW=0.0.0.0/0 ${extra}
+        if wait_for 90 "${case_name}: the page asks for host access" ui_state_is "${c}" needs_host_access; then
+            pass "${case_name}: the status page says host access is needed"
+        else
+            fail "${case_name}: the status page says host access is needed (it says: $(ui_json "${c}" /api/status .state))"
+            dump_agent "${c}"
+            continue
+        fi
+        check_equal "${case_name}: the reason is ${reason}" "$(ui_json "${c}" /api/status .access.reason)" "${reason}"
+        [[ "$(ui_json "${c}" /api/status .detail)" == *"${expect}"* ]] \
+            && pass "${case_name}: the page tells the user what to do (${expect})" \
+            || fail "${case_name}: the page tells the user what to do (${expect})"
+        container_log_has "${c}" "The Wazuh agent was not started (${reason})" \
+            && pass "${case_name}: the app log says why nothing was started" || fail "${case_name}: the app log says why nothing was started"
+        [[ -z "$(manager_agent_line "e2e-hu-${case_name}")" ]] \
+            && pass "${case_name}: no agent was registered with the manager" || fail "${case_name}: no agent was registered with the manager"
+        # The output is captured first: "docker exec | grep -q" fails under pipefail when grep exits early.
+        health="$(docker exec "${c}" wazuh-ha-healthcheck 2>&1)"
+        grep -q 'host access' <<< "${health}" \
+            && pass "${case_name}: the container reports itself unhealthy, for that reason" \
+            || fail "${case_name}: the container reports itself unhealthy, for that reason (${health})"
+        check_equal "${case_name}: no daemon of the agent runs" \
+            "$(docker exec "${c}" bash -c 'pgrep -fc "[o]ssec/bin/wazuh-" || true')" 0
+    done << 'CASES'
+default||missing_capabilities|SYS_ADMIN
+protected|--cap-add SYS_ADMIN --cap-add SYS_PTRACE|protection_mode|Protection mode off
+restart|--cap-add SYS_ADMIN --cap-add SYS_PTRACE|restart_needed|Restart the app
+CASES
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 main() {
     local scenarios=("$@")
-    [[ ${#scenarios[@]} -gt 0 ]] || scenarios=(validation enroll journal fim config supervisor ui capabilities upgrade crash duplicate reenroll password)
+    [[ ${#scenarios[@]} -gt 0 ]] || scenarios=(validation enroll journal fim config supervisor ui capabilities upgrade crash duplicate reenroll password host host_cpu host_control host_unavailable)
 
     log "image under test: ${IMAGE}   manager: wazuh-manager ${MANAGER_VERSION}"
     # Validation needs no manager; everything else does.

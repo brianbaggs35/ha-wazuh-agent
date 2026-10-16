@@ -1,0 +1,12 @@
+{
+  "manager_address": "wazuh.example.lan",
+  "enrollment_ca_path": "/config/ca.pem",
+  "enrollment_certificate_path": "/config/agent.pem",
+  "enrollment_key_path": "/config/agent.key",
+  "ha_core_log_enabled": true,
+  "log_files": [{"path": "/share/myapp/*.log"}, {"path": "/var/log/messages"}],
+  "fim_directories": [{"path": "/homeassistant", "realtime": true}, {"path": "/ssl"}, {"path": "/etc", "realtime": true, "report_changes": true}, {"path": "/media/recordings"}],
+  "fim_ignore": ["/homeassistant/www"],
+  "fim_nodiff_sregex": ["^/ssl/", "^/homeassistant/.storage/", "/private/"],
+  "sca_policies": ["/config/sca/home-assistant.yml", "/etc/sca/host-policy.yml"]
+}
