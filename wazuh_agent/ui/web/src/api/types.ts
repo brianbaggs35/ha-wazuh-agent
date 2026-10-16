@@ -2,7 +2,14 @@
 // connection.go); keep the two in step.
 
 export type StateName =
-  'starting' | 'stale' | 'stopped' | 'degraded' | 'disconnected' | 'connecting' | 'running'
+  | 'starting'
+  | 'stale'
+  | 'stopped'
+  | 'degraded'
+  | 'disconnected'
+  | 'connecting'
+  | 'running'
+  | 'needs_host_access'
 
 export interface Daemon {
   name: string
@@ -43,6 +50,14 @@ export interface Summary {
   app: { version: string | null }
 }
 
+/** Where the agent was asked to run, and whether it can: the Home Assistant OS device or only this app. */
+export interface Access {
+  scope: 'host' | 'container'
+  available: boolean
+  reason?: string
+  message?: string
+}
+
 export interface Status {
   state: StateName
   headline: string
@@ -52,6 +67,7 @@ export interface Status {
   connection: Connection
   registration: Registration
   summary?: Summary
+  access?: Access
 }
 
 export interface AgentUpdate {

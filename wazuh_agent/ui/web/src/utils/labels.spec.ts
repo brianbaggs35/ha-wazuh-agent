@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { StateName } from '@/api/types'
-import { daemonLabel, moduleLabel, riskyWhenOn, stateLook } from './labels'
+import { daemonLabel, moduleLabel, riskyWhenOn, scopeLabel, stateLook } from './labels'
 
 const states: StateName[] = [
   'starting',
@@ -10,6 +10,7 @@ const states: StateName[] = [
   'disconnected',
   'connecting',
   'running',
+  'needs_host_access',
 ]
 
 describe('stateLook', () => {
@@ -26,6 +27,15 @@ describe('stateLook', () => {
     expect(stateLook.degraded.tone).toBe('warning')
     expect(stateLook.stopped.tone).toBe('error')
     expect(stateLook.disconnected.tone).toBe('error')
+    expect(stateLook.needs_host_access.tone).toBe('warning')
+  })
+})
+
+describe('scopeLabel', () => {
+  it('says in words where the agent runs, and leaves anything else as it is', () => {
+    expect(scopeLabel('host')).toBe('The Home Assistant OS device')
+    expect(scopeLabel('container')).toBe("This app's own container only")
+    expect(scopeLabel('somewhere-new')).toBe('somewhere-new')
   })
 })
 

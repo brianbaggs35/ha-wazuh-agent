@@ -2,12 +2,15 @@
 import { computed } from 'vue'
 import { mdiHomeAutomation } from '@mdi/js'
 import type { Status } from '@/api/types'
+import { scopeLabel } from '@/utils/labels'
 
 const props = defineProps<{ status: Status | null }>()
 
 const rows = computed(() => {
   const host = props.status?.summary?.host ?? {}
   const wanted: [string, string][] = [
+    ['Monitoring', 'scope'],
+    ['Host name', 'hostname'],
     ['Home Assistant OS', 'operating_system'],
     ['Core', 'core_version'],
     ['Supervisor', 'supervisor_version'],
@@ -15,7 +18,9 @@ const rows = computed(() => {
     ['Architecture', 'arch'],
     ['Update channel', 'channel'],
   ]
-  return wanted.filter(([, key]) => host[key]).map(([label, key]) => ({ label, value: host[key] }))
+  return wanted
+    .filter(([, key]) => host[key])
+    .map(([label, key]) => ({ label, value: key === 'scope' ? scopeLabel(host[key]!) : host[key] }))
 })
 </script>
 

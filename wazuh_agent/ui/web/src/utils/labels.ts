@@ -4,6 +4,7 @@ import {
   mdiHelpCircleOutline,
   mdiLanDisconnect,
   mdiProgressClock,
+  mdiShieldAlertOutline,
   mdiStopCircleOutline,
 } from '@mdi/js'
 import type { StateName } from '@/api/types'
@@ -25,6 +26,14 @@ export const stateLook: Record<StateName, StateLook> = {
   disconnected: { tone: 'error', icon: mdiLanDisconnect, pulse: false },
   stopped: { tone: 'error', icon: mdiStopCircleOutline, pulse: false },
   stale: { tone: 'warning', icon: mdiHelpCircleOutline, pulse: false },
+  needs_host_access: { tone: 'warning', icon: mdiShieldAlertOutline, pulse: false },
+}
+
+/** Where the agent runs, in words. Unknown values (an older service) are shown as they are. */
+export function scopeLabel(scope: string): string {
+  if (scope === 'host') return 'The Home Assistant OS device'
+  if (scope === 'container') return "This app's own container only"
+  return scope
 }
 
 const daemonNames: Record<string, string> = {

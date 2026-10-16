@@ -16,6 +16,20 @@ describe('HostCard', () => {
     expect(wrapper.findAll('[data-test="row"]')).toHaveLength(6)
   })
 
+  it('says whether the agent watches the device or only its own container', () => {
+    const device = {
+      ...summary,
+      host: { ...summary.host, scope: 'host', hostname: 'homeassistant' },
+    }
+    const text = mountCard(makeStatus({ summary: device })).text()
+    expect(text).toContain('The Home Assistant OS device')
+    expect(text).toContain('homeassistant')
+    const own = { ...summary, host: { ...summary.host, scope: 'container' } }
+    expect(mountCard(makeStatus({ summary: own })).text()).toContain(
+      "This app's own container only",
+    )
+  })
+
   it('leaves out what was not reported', () => {
     const partial = {
       ...summary,
