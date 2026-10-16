@@ -65,7 +65,7 @@ RUN set -eux; \
     groupadd --system --gid 1451 wazuhui; \
     useradd --system --uid 1451 --gid wazuhui --no-create-home --shell /sbin/nologin wazuhui; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates curl gnupg busybox-static; \
+    apt-get install -y --no-install-recommends busybox-static ca-certificates curl gnupg; \
     # HTTPS only, even across redirects.
     curl -fsSL --proto '=https' --tlsv1.2 --retry 3 https://packages.wazuh.com/key/GPG-KEY-WAZUH -o /tmp/wazuh.key; \
     fingerprint="$(gpg --show-keys --with-colons /tmp/wazuh.key | awk -F: '/^fpr:/ {print $10; exit}')"; \
@@ -109,7 +109,9 @@ RUN chmod 0755 \
     # The package's restart.sh restarts through systemd when it finds one, which on Home Assistant OS
     # means `systemctl restart wazuh-agent` on a host with no such service. This one asks the app to
     # restart the agent, which it starts and supervises itself.
-    install -o root -g wazuh -m 0750 /usr/local/lib/wazuh-ha/restart-wazuh /var/ossec.dist/active-response/bin/restart.sh
+    install -o root -g wazuh -m 0750 \
+        /usr/local/lib/wazuh-ha/restart-wazuh \
+        /var/ossec.dist/active-response/bin/restart.sh
 
 # The app's own supervisor is the entrypoint (the base image's is s6-overlay's /init). The agent is given
 # time to stop its daemons cleanly on shutdown (they flush their databases on SIGTERM); the Supervisor's
