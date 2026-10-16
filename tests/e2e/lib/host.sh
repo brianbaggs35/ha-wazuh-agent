@@ -38,7 +38,7 @@ host_start() {
     shift 2
     docker rm -f "${name}" > /dev/null 2>&1 || true
     docker run -d --name "${name}" --hostname "${HOST_HOSTNAME}" --network "${E2E_NET}" --pid=host \
-        --cap-add SYS_ADMIN -v "${volume}:${HOST_DATA_PATH}" "$@" "${HOST_IMAGE}" bash -c '
+        --cap-add SYS_ADMIN --security-opt apparmor=unconfined -v "${volume}:${HOST_DATA_PATH}" "$@" "${HOST_IMAGE}" bash -c '
         mount --make-rshared /
         mkdir -p /etc/ssh /root/.ssh /mnt/boot /mnt/data/supervisor/addons/local /run/systemd/system
         printf "%s\n" "NAME=\"Home Assistant OS\"" "VERSION=\"17.0\"" "ID=haos" "VERSION_ID=\"17.0\"" \
@@ -60,48 +60,32 @@ host_start() {
 # The app, started the way Home Assistant starts it with host_network, host_pid, host_uts and the
 # SYS_ADMIN and SYS_PTRACE capabilities, and Protection mode off: in the stand-in's network, in the
 # host's process namespace, under Docker's init, with seccomp off (the Supervisor turns it off for
-# every app).
+# every app) and AppArmor off unless a profile is named in the options.
 host_agent_start() {
-    local name="$1" volume="$2" host="$3" pid
+    local name="$1" volume="$2" host="$3" pid arg apparmor=(--security-opt apparmor=unconfined)
     shift 3
+    # Docker's own AppArmor profile (docker-default, which Ubuntu applies to every container) denies mount
+    # even to a container with SYS_ADMIN. Home Assistant never runs an app under it: it uses the app's
+    # profile, or none. So the app runs unconfined here unless the caller names the profile to run under.
+    for arg in "$@"; do
+        [[ "${arg}" == apparmor=* ]] && apparmor=()
+    done
     pid="$(docker inspect -f '{{.State.Pid}}' "${host}")"
     docker rm -f "${name}" > /dev/null 2>&1 || true
     docker run -d --init --name "${name}" --network "container:${host}" --pid=host \
-        --cap-add SYS_ADMIN --cap-add SYS_PTRACE --security-opt seccomp=unconfined \
+        --cap-add SYS_ADMIN --cap-add SYS_PTRACE --security-opt seccomp=unconfined "${apparmor[@]}" \
         -e "WAZUH_HA_HOST_PID=${pid}" -e WAZUH_UI_ALLOW=0.0.0.0/0 \
         -v "${volume}:/data" "$@" "${IMAGE}" > /dev/null
     track_container "${name}"
     return 0
 }
 
-# container_log_count CONTAINER TEXT -> how many log lines contain TEXT
-container_log_count() {
-    local name="$1" text="$2" logs
-    logs="$(docker logs "${name}" 2>&1)"
-    grep -cF -- "${text}" <<< "${logs}" || true
-    return 0
-}
-
-# container_log_has_at_least CONTAINER TEXT COUNT (a predicate for wait_for)
-container_log_has_at_least() {
-    local name="$1" text="$2" count="$3"
-    [[ "$(container_log_count "${name}" "${text}")" -ge "${count}" ]]
-    return
-}
-
-# host_settle CONTAINER
-# The first time an agent connects, the manager sends it the group configuration and Wazuh asks for a
-# restart. The app does that restart itself (a restart.sh that asked systemd would find none on the
-# host), and events produced meanwhile are lost, so tests that inject events wait until it is over.
+# host_settle CONTAINER: agent_settle, and real-time file integrity monitoring running again
 host_settle() {
     local c="$1"
-    wait_for 120 "the agent is asked to restart after the first configuration" \
-        container_log_has "${c}" "Wazuh asked for the agent to be restarted" || info "no restart request seen"
-    wait_for 120 "the agent runs again" container_log_has_at_least "${c}" "Wazuh agent running:" 2
-    wait_for 120 "the agent is connected again" docker exec "${c}" wazuh-ha-healthcheck
+    agent_settle "${c}"
     wait_for 60 "real-time file integrity monitoring runs again" \
         container_log_has_at_least "${c}" "Real-time file integrity monitoring started" 2
-    sleep 5
     return 0
 }
 

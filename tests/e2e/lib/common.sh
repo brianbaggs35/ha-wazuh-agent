@@ -232,15 +232,35 @@ agent_start() {
     return 0
 }
 
+# container_log_count CONTAINER TEXT -> how many log lines contain TEXT
+container_log_count() {
+    local name="$1" text="$2" logs
+    logs="$(docker logs "${name}" 2>&1)"
+    grep -cF -- "${text}" <<< "${logs}" || true
+    return 0
+}
+
+# container_log_has_at_least CONTAINER TEXT COUNT (a predicate for wait_for)
+container_log_has_at_least() {
+    local name="$1" text="$2" count="$3"
+    [[ "$(container_log_count "${name}" "${text}")" -ge "${count}" ]]
+    return
+}
+
 # agent_settle CONTAINER
-# The first time an agent connects, the manager sends it the group configuration and the
-# agent restarts its own daemons (auto_restart). Events produced during that restart are
-# not delivered, so tests that inject events wait until it is over.
+# The first time an agent connects, the manager sends it the group configuration and Wazuh asks for a
+# restart. The app does that restart itself (it looks for the request every few seconds), and events
+# produced while it happens are not delivered, so tests that inject events, or that stop the agent
+# themselves, wait until it is over.
 agent_settle() {
     local c="$1"
-    wait_for 90 "first-connection configuration reload" container_log_has "${c}" \
-        "Agent is reloading due to shared configuration changes" || info "no configuration reload seen"
-    sleep 12
+    if wait_for 90 "first-connection configuration reload" container_log_has "${c}" \
+        "Agent is reloading due to shared configuration changes"; then
+        wait_for 120 "the app has restarted the agent" container_log_has_at_least "${c}" "Wazuh agent running:" 2 \
+            || info "no restart of the agent seen"
+    else
+        info "no configuration reload seen"
+    fi
     wait_for 120 "agent connected again after the reload" docker exec "${c}" wazuh-ha-healthcheck
     sleep 5
     return 0

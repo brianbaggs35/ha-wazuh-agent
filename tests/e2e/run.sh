@@ -3,8 +3,10 @@
 #
 #   IMAGE=ha-wazuh-agent:test tests/e2e/run.sh [scenario ...]
 #
-# Scenarios: validation enroll journal fim config supervisor ui capabilities upgrade crash duplicate reenroll password
-#            host host_cpu host_control host_unavailable host_incompatible host_packages host_apparmor   (default: all)
+# Scenarios: validation enroll journal fim config supervisor ui capabilities upgrade crash duplicate reenroll
+#            host host_cpu host_control host_unavailable host_incompatible host_packages host_apparmor password
+#            (default: all, in this order. password is last: it makes the manager require a registration
+#            password, which every enrollment after it would then fail without.)
 #   host_apparmor loads the app's AppArmor profile and so only runs where AppArmor is enforced and
 #   sudo is available (GitHub's runners); anywhere else it says so and is skipped.
 #   The first group runs the agent in a plain container (monitor_host off). The host group runs it as
@@ -352,6 +354,9 @@ scenario_ui() {
     agent_start "${c}" "${vol}" -e WAZUH_UI_ALLOW=0.0.0.0/0
 
     wait_for 150 "agent active" manager_agent_active "${name}" || { fail "agent active"; dump_agent "${c}"; return 0; }
+    # The agent restarts once after its first connection (Wazuh asks); the test stops it later, and must not do
+    # that while the app is restarting it for that.
+    agent_settle "${c}"
     if wait_for 90 "the page reports running" ui_state_is "${c}" running; then
         pass "the page reports the agent as running"
     else
@@ -931,7 +936,7 @@ scenario_host_incompatible() {
     write_options "${vol}" "{\"monitor_host\": true, \"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", ${FAST}}"
     # A device without glibc (Alpine uses musl): the loader the Wazuh agent was built for is not there.
     docker run -d --name "${h}" --hostname haos-musl --network "${E2E_NET}" --pid=host --cap-add SYS_ADMIN \
-        -v "${vol}:${HOST_DATA_PATH}" alpine:3 sh -c 'mount --make-rshared /; touch /tmp/host-ready; exec sleep 100000' > /dev/null
+        --security-opt apparmor=unconfined -v "${vol}:${HOST_DATA_PATH}" alpine:3 sh -c 'mount --make-rshared /; touch /tmp/host-ready; exec sleep 100000' > /dev/null
     track_container "${h}"
     wait_for 60 "the stand-in host is ready" docker exec "${h}" test -f /tmp/host-ready || { fail "the stand-in host started"; return 0; }
     host_agent_start "${c}" "${vol}" "${h}"
@@ -1030,7 +1035,7 @@ scenario_host_apparmor() {
 # ---------------------------------------------------------------------------
 main() {
     local scenarios=("$@")
-    [[ ${#scenarios[@]} -gt 0 ]] || scenarios=(validation enroll journal fim config supervisor ui capabilities upgrade crash duplicate reenroll password host host_cpu host_control host_unavailable host_incompatible host_packages host_apparmor)
+    [[ ${#scenarios[@]} -gt 0 ]] || scenarios=(validation enroll journal fim config supervisor ui capabilities upgrade crash duplicate reenroll host host_cpu host_control host_unavailable host_incompatible host_packages host_apparmor password)
 
     log "image under test: ${IMAGE}   manager: wazuh-manager ${MANAGER_VERSION}"
     # Validation needs no manager; everything else does.
