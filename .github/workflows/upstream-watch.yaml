@@ -1,0 +1,33 @@
+---
+name: Home Assistant upstream watch
+
+# The app finds Home Assistant Core and the Supervisor on the device by the command line their containers start
+# them with (see wazuh-ha-host). Home Assistant decides that, and it changed once without notice: Core 2026.9
+# added -P, and the Python package inventory of app version 1.0.3 went silently empty. Weekly, this reads the
+# run scripts of both containers (main branch and latest release) and fails if the app would no longer recognise
+# the process they start, so the app can be taught before the change reaches a device. A failure is
+# an upstream change to look at, not a regression of this repository.
+
+"on":
+  schedule:
+    - cron: "41 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    name: Core and the Supervisor are still started the way the app recognises
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Compare with the run scripts of Home Assistant's containers
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: tests/host/upstream.sh
