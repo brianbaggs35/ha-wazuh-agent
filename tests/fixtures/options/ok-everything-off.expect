@@ -2,3 +2,5 @@ has: <enabled>no</enabled>
 no: location>journald
 no: <label
 has: <disabled>yes</disabled>
+in-sca: <enabled>no</enabled>
+no: home_assistant_os.yml

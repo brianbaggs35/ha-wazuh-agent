@@ -1,0 +1,5 @@
+# The policy file is in the host's file system, which this check cannot see.
+allow: sca: WARNING: File '/mnt/data/supervisor/addon_configs/local_wazuh_agent/sca/mine.yml' not found.
+in-sca: <enabled>yes</enabled>
+in-sca: <policy>/mnt/data/supervisor/addon_configs/local_wazuh_agent/sca/mine.yml</policy>
+no: home_assistant_os.yml

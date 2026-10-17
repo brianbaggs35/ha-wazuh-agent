@@ -38,17 +38,21 @@ if [ -f "${view}/cpuinfo" ]; then
 fi
 
 # Home Assistant OS has no package manager, so there is nothing of the host's for vulnerability detection
-# to match. Home Assistant Core's Python packages are what it can match, and Wazuh looks for Python
-# packages only in fixed places, one of which is /home/USER/.local/lib/pythonX/*-packages. The host's /home
-# is an empty directory, so the agent is given one with that place in it, linked to the folder the app
-# keeps pointed at Core's packages (see core_python in wazuh-ha-host). Without a /home to put it on, or
+# to match. The Python packages of Home Assistant Core and of the Supervisor are what it can match, and
+# Wazuh looks for Python packages only in fixed places, one of which is /home/USER/.local/lib/pythonX/*-packages.
+# The host's /home is an empty directory, so the agent is given one with such a place for each program, linked to
+# the folder the app keeps pointed at that program's packages (see core_python in wazuh-ha-host, which also
+# says which programs there are: one LINK:USER line each in the marker file). Without a /home to put them on, or
 # without the packages, the agent runs as it would anyway.
-if [ -f "${view}/corepython.enabled" ] && [ -d /home ]; then
+if [ -s "${view}/pythonpackages.enabled" ] && [ -d /home ]; then
     if "${busybox}" mount -t tmpfs -o mode=0755,size=64k tmpfs /home; then
-        "${busybox}" mkdir -p /home/homeassistant/.local/lib/python3
-        "${busybox}" ln -s "${view}/corepython" /home/homeassistant/.local/lib/python3/site-packages
+        while IFS=: read -r link user; do
+            [ -n "${link}" ] || continue
+            "${busybox}" mkdir -p "/home/${user}/.local/lib/python3"
+            "${busybox}" ln -s "${view}/${link}" "/home/${user}/.local/lib/python3/site-packages"
+        done < "${view}/pythonpackages.enabled"
     else
-        echo "Could not mount a /home for Home Assistant Core's Python packages; they will not be inventoried."
+        echo "Could not mount a /home for the Python packages of Home Assistant's programs; they will not be inventoried."
     fi
 fi
 

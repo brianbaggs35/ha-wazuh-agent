@@ -1,0 +1,162 @@
+# Security configuration assessment of a Home Assistant OS device.
+#
+# Written for the "Wazuh Agent" Home Assistant app (https://github.com/brianbaggs35/ha-wazuh-agent), which puts it
+# where the agent reads it when the agent monitors the device and the option sca_host_policy is on. It is
+# not part of Wazuh. Every check is about something Home Assistant OS itself sets up, or that the device's
+# owner controls, so what it reports is a change on the device, or something its owner opened or filled.
+#
+# Written against the files of Home Assistant OS 18.3 (/usr/lib/sysctl.d, the dropbear and docker units,
+# /usr/sbin/haos-config, /etc/passwd) and Wazuh 4.14's own rule engine (wm_sca.c), not from memory:
+#   * a content rule (f:FILE -> ...) on a file that does not exist is "not applicable", an existence rule
+#     (f:FILE, not f:FILE) is not, so the checks that ask whether a file is there use the second form
+#   * regular expressions are PCRE2 (regex_type): Wazuh's own flavour (OS_Regex) documents \w, \d, \s and the
+#     like, but no [...] classes
+#   * commands run without a shell, with the agent's PATH on the device, and their output is read line by line
+# The check IDs are this app's own range; Wazuh's policies use 1000 to 41065 and IDs must be unique across
+# policy files.
+
+---
+policy:
+  id: "home_assistant_os"
+  file: "home_assistant_os.yml"
+  name: "Home Assistant OS device"
+  description: >-
+    Checks of the Home Assistant OS device the Wazuh agent app monitors: remote access to the device, its
+    accounts, the Docker socket, free space and the kernel protections that Home Assistant OS turns on.
+  references:
+    - https://contributors.home-assistant.io/os/operating-system/debugging/
+  regex_type: pcre2
+
+requirements:
+  title: "Check that this is Home Assistant OS."
+  description: >-
+    The checks are written for Home Assistant OS and mean nothing on another system.
+  condition: all
+  rules:
+    - 'f:/etc/os-release -> r:^ID=haos$'
+
+checks:
+  - id: 910001
+    title: "Debug SSH access to the device is turned off."
+    description: >-
+      Home Assistant OS can run an SSH server (port 22222) that gives root access to the device itself, not to a
+      container. It runs only while /root/.ssh/authorized_keys holds a key.
+    rationale: >-
+      A key in that file is a way into the whole device that does not go through Home Assistant's login, and the
+      SSH server stays open until the keys are removed.
+    remediation: >-
+      Import a CONFIG drive that has no authorized_keys file (insert it and run `ha os import`, or restart the
+      device with it inserted): the import removes all keys and stops the SSH server. Or send DELETE
+      /os/ssh/authorized_keys to the Supervisor's API.
+    references:
+      - https://contributors.home-assistant.io/os/operating-system/debugging/
+    condition: all
+    rules:
+      - 'not f:/root/.ssh/authorized_keys'
+
+  - id: 910002
+    title: "No SSH key is waiting to be imported from the boot partition."
+    description: >-
+      When Home Assistant OS starts it imports the CONFIG folder of its boot partition, including authorized_keys,
+      and then removes the folder.
+    rationale: >-
+      A key left there is installed as soon as the device restarts, which turns on the debug SSH access of check
+      910001.
+    remediation: >-
+      Remove /mnt/boot/CONFIG/authorized_keys (and the folder) before the device restarts, unless you put it
+      there.
+    references:
+      - https://contributors.home-assistant.io/os/operating-system/debugging/
+    condition: all
+    rules:
+      - 'not f:/mnt/boot/CONFIG/authorized_keys'
+
+  - id: 910003
+    title: "Only root has user ID 0."
+    description: >-
+      Home Assistant OS ships with a single account whose user ID is 0, root.
+    rationale: >-
+      An account with user ID 0 has all the power of root, whatever it is called.
+    remediation: >-
+      Find the account in /etc/passwd and find out who added it: on a device that nobody changed, there is none.
+    condition: none
+    rules:
+      - 'f:/etc/passwd -> !r:^# && !r:^root: && r:^[^:]+:[^:]*:0:'
+
+  - id: 910004
+    title: "The Docker socket cannot be used by every account."
+    description: >-
+      Home Assistant OS creates the Docker socket (/run/docker.sock) so that only root and the docker group can
+      use it (mode 0660).
+    rationale: >-
+      Whoever can use the Docker socket can start a container with the whole device mounted in it, which is root
+      on the device.
+    remediation: >-
+      Restart the device to have Home Assistant OS create the socket again, and find out what changed its
+      permissions.
+    references:
+      - https://docs.docker.com/engine/security/
+    condition: all
+    rules:
+      - 'c:stat -c %a /run/docker.sock -> r:^[0-7][0-7]0$'
+
+  - id: 910005
+    title: "The data partition is less than 90% full."
+    description: >-
+      Home Assistant's database, its backups and the data of every app are on the data partition (/mnt/data).
+    rationale: >-
+      When the partition is full, Home Assistant cannot record anything, back up or update, and the apps that
+      write to it fail.
+    remediation: >-
+      Delete backups you no longer need, shrink what the recorder keeps, or move to a larger disk.
+    condition: all
+    rules:
+      - 'c:df -P /mnt/data -> n:^\S+\s+\d+\s+\d+\s+\d+\s+(\d+)% compare < 90'
+
+  - id: 910006
+    title: "The kernel protects hard links, symbolic links, regular files and FIFOs in shared directories."
+    description: >-
+      Home Assistant OS turns on fs.protected_hardlinks, fs.protected_symlinks, fs.protected_regular and
+      fs.protected_fifos (its /usr/lib/sysctl.d/50-default.conf).
+    rationale: >-
+      Without them, a program running as one user can be tricked into following a link or writing to a file that
+      another user planted in a shared directory such as /tmp.
+    remediation: >-
+      Restart the device to have Home Assistant OS set them again, and find out what changed them (sysctl).
+    references:
+      - https://www.kernel.org/doc/html/latest/admin-guide/sysctl/fs.html
+    condition: all
+    rules:
+      - 'f:/proc/sys/fs/protected_hardlinks -> 1'
+      - 'f:/proc/sys/fs/protected_symlinks -> 1'
+      - 'f:/proc/sys/fs/protected_regular -> r:^[12]$'
+      - 'f:/proc/sys/fs/protected_fifos -> r:^[12]$'
+
+  - id: 910007
+    title: "No file in /etc can be changed by every account."
+    description: >-
+      Home Assistant OS keeps its configuration in /etc, and none of its files can be written by everyone.
+    rationale: >-
+      A file in /etc that every account can write can be used to change how the system works, by an account that
+      has no business doing it.
+    remediation: >-
+      Take the write permission away from others (chmod o-w FILE) on the files that are listed, and find out why
+      they have it.
+    condition: none
+    rules:
+      - 'c:find /etc -xdev -type f -perm -0002 -> r:^/'
+
+  - id: 910008
+    title: "The Wazuh manager cannot run commands on this device through the agent."
+    description: >-
+      The app switches off the agent's remote commands (the manager pushing command execution settings in shared
+      configuration) unless the option allow_remote_commands is on.
+    rationale: >-
+      The agent runs as root on the device. With remote commands on, whoever controls the Wazuh manager, or the
+      connection to it, can run commands on the device.
+    remediation: >-
+      Turn allow_remote_commands off in the app's Configuration tab, and restart the app. Look at
+      local_internal_options_extra.conf in the app's configuration folder, if there is one.
+    condition: none
+    rules:
+      - 'f:etc/local_internal_options.conf -> r:^\w+\.remote_commands=1'

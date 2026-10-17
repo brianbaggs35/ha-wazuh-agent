@@ -13,7 +13,8 @@ inventory and file integrity events appear in the Wazuh dashboard under **Agents
 
 > **Testing.** The project's tests run the app against real Wazuh managers and a stand-in for the
 > Home Assistant OS device (enrollment, restarts, journal collection, file integrity, what the
-> manager records about the host, registration passwords), with the app's AppArmor profile loaded
+> manager records about the host, the Python packages of Home Assistant Core and the Supervisor, the
+> configuration assessment, registration passwords), with the app's AppArmor profile loaded
 > into the test machine's kernel. Home Assistant itself (the Supervisor, its handling of Protection
 > mode, how it installs the profile, ingress) is not part of the automated tests.
 
@@ -116,16 +117,47 @@ The agent runs inside the device's own file system, so every Wazuh feature looks
 | Source | What you get | On by default |
 | --- | --- | --- |
 | **Host journal** | SSH logins (`sshd`, `dropbear`), `sudo`/`su`/`login`, kernel warnings, **Home Assistant Core** logs (including failed web login attempts), **Supervisor** logs, and errors from any service. Optionally every app's logs, or the entire journal. | Yes (not apps/all) |
-| **File integrity** | Added, changed and deleted files in the Home Assistant configuration and certificates, **and** what a Wazuh agent watches on any Linux machine (`/etc`, `/usr/bin`, `/usr/sbin`, `/bin`, `/sbin`) plus the boot partition (`/mnt/boot`, where the SSH keys of the debug login live), root's SSH keys (`/root/.ssh`) and your own apps (`/mnt/data/supervisor/addons/local`). Real time where it matters. | Yes |
-| **System inventory** | The device's hardware (CPU name, cores, memory), its operating system and version, network interfaces and its real address, **processes**, **listening ports** (with the process that opened them), **user accounts and groups**, **services**, and the **Python packages of Home Assistant Core**. | Yes |
+| **File integrity** | Added, changed and deleted files in the Home Assistant configuration and certificates, **and** what a Wazuh agent watches on any Linux machine (`/etc`, `/usr/bin`, `/usr/sbin`, `/bin`, `/sbin`) plus the boot partition (`/mnt/boot`, where a `CONFIG` folder with SSH keys is put to be imported), root's SSH keys (`/root/.ssh`, where the debug login keeps them) and your own apps (`/mnt/data/supervisor/addons/local`). Real time where it matters. | Yes |
+| **System inventory** | The device's hardware (CPU name, cores, memory), its operating system and version, network interfaces and its real address, **processes**, **listening ports** (with the process that opened them), **user accounts and groups**, **services**, and the **Python packages of Home Assistant Core and of the Supervisor**. | Yes |
 | **Rootkit checks** | Known rootkit files, trojaned binaries, `/dev`, network interfaces and system file permissions, on the device. | Yes (process and port checks: no) |
-| **Configuration assessment (SCA)** | Policy checks run against the device, with policies you supply (Wazuh's built-in ones are written for Debian, Ubuntu and similar systems). | No |
+| **Configuration assessment (SCA)** | The app's own checks of the device (remote access, accounts, the Docker socket, free space, kernel protections; see *Configuration assessment* below), and policies you supply. | Yes (the app's own checks) |
 | **Custom logs and commands** | Any file or command output you add. Commands run on the device. | None |
 | **Active response** | Scripts the manager triggers run on the device. | No |
 
 Wazuh's built-in rules apply on the manager: for example, a failed SSH login on the device
 raises **rule 5710** with its MITRE ATT&CK mapping, and a change to `configuration.yaml`
 raises a file integrity alert.
+
+### Configuration assessment
+
+Security configuration assessment (SCA) checks a machine against a policy and shows what passes and what
+does not. In the Wazuh dashboard it is the **Configuration Assessment** module of the agent. Wazuh's own
+policies are written for Debian, Ubuntu, Red Hat and similar systems and do not describe Home Assistant OS (the
+agent skips them, and says so in its log), so the app ships a policy of its own, `home_assistant_os`, which
+the agent runs against the device. It is on by default (`sca_host_policy`), runs when the agent starts and
+then every `sca_interval` (12 hours unless you change it), and has these checks:
+
+| Check | What it looks at |
+| --- | --- |
+| Debug SSH access to the device is turned off | Whether `/root/.ssh/authorized_keys` exists. Home Assistant OS runs an SSH server on port 22222, with root access to the device itself, only while that file holds a key. |
+| No SSH key is waiting to be imported from the boot partition | `/mnt/boot/CONFIG/authorized_keys`. Home Assistant OS imports the `CONFIG` folder of the boot partition when it starts. |
+| Only root has user ID 0 | `/etc/passwd`. |
+| The Docker socket cannot be used by every account | The permissions of `/run/docker.sock`, which Home Assistant OS creates so that only root and the docker group can use it. |
+| The data partition is less than 90% full | `df -P /mnt/data`: Home Assistant's database, backups and the data of every app are there. |
+| The kernel protects hard links, symbolic links, regular files and FIFOs in shared directories | `/proc/sys/fs/protected_*`, which Home Assistant OS turns on. |
+| No file in `/etc` can be changed by every account | `find /etc -xdev -type f -perm -0002`. |
+| The Wazuh manager cannot run commands on this device through the agent | This app's own agent settings (`remote_commands`, which `allow_remote_commands` controls). |
+
+A *failed* check reports a state, not necessarily a fault: the first one fails on a device whose owner opened
+debug SSH access on purpose. Each check says in the dashboard what it looked at, why it matters and what to
+do. They were written from the files of Home Assistant OS 18.3 and from Wazuh's own source; where a file of
+another version is not there, Wazuh reports the check as *not applicable*.
+
+To add checks of your own (for example for your Home Assistant configuration), write a policy in the
+[format Wazuh describes](https://documentation.wazuh.com/current/user-manual/capabilities/sec-config-assessment/creating-custom-policies.html),
+put it in the app's configuration folder, list it under `sca_policies` (for example `/config/sca/home-assistant.yml`) and
+turn `sca_enabled` on. Its checks run against the device too. Use check IDs that no other policy uses
+(this app's own are 910001 to 910008), and write the device's own paths in the rules.
 
 ### Paths: the app's folders and the device's
 
@@ -155,18 +187,29 @@ translated: write the device's paths there.
   one of the operating systems Wazuh has vulnerability content for (Wazuh's compatibility matrix
   lists, among others, Debian, Ubuntu, Red Hat, SUSE and Amazon Linux, plus Python and npm packages),
   so it reports nothing about the software of the operating system itself, whatever the permissions of
-  the agent. What it can match on a Home Assistant device is Python: Home Assistant Core is a Python
-  application, and the agent reports the packages Core runs on (see `inventory_core_packages`), which
-  Wazuh has advisories for. Those findings appear on a manager that has vulnerability detection set
-  up. The Python packages of apps (add-ons) are not included, and the packages of other software in
-  the standard places (dpkg, rpm, apk, npm) are in the inventory only when **Inventory - packages**
-  is on.
-- **Container security.** Wazuh's Docker listener needs Python on the monitored machine, and Home
-  Assistant OS has none. Docker's own events are in the journal.
+  the agent. What it can match on a Home Assistant device is Python: Home Assistant Core and the
+  Supervisor are Python applications, and the agent reports the packages they run on (see
+  `inventory_core_packages`), which Wazuh has advisories for. In the source of Wazuh 4.14.9 the scanner
+  chooses the advisories by the package's format first and uses the operating system only for advisories that
+  name one, so Python packages should be matched on an operating system Wazuh does not know. The documentation
+  does not say so, and the tests cannot run the vulnerability detection (it needs Wazuh's indexer and its feed),
+  so this is read from the source and not observed. Findings appear on a manager that has vulnerability
+  detection set up, and only for packages that are vulnerable, so the dashboard's vulnerability counts can be
+  zero while the inventory lists well over a thousand packages. The Supervisor's own entry is called
+  `supervisor`, like an unrelated package of the Python index; OSV, which Wazuh uses for Python, lists no
+  advisory for version 2026.10.2 of that package. The Python packages of apps (add-ons) are not included, and
+  the packages of other software in the standard places (dpkg, rpm, apk, npm) are in the inventory only when
+  **Inventory - packages** is on.
+- **Container security.** Wazuh's Docker listener needs the `docker` Python module on the monitored
+  machine. Home Assistant OS does not have it: some builds carry a small Python 3.12 of their own (checked on
+  the Raspberry Pi 5 build of 18.3: no `docker` module, and no SSL support), others none (the generic x86-64
+  build of 18.3), so the listener is not set up. What the Supervisor does with its containers is in its log,
+  which is in the journal (`journal_supervisor`, on by default).
 - **The device's own agent management.** The agent is part of this app's image, so it is updated
   by updating the app (see *Updating*), not by the manager's remote upgrade.
-- **Security configuration assessment.** Wazuh's built-in policies do not fit Home Assistant OS.
-  Write your own; they run against the device.
+- **Security configuration assessment.** Wazuh's built-in policies do not fit Home Assistant OS. The
+  app's own policy (see *Configuration assessment*) is short on purpose: each check looks at something
+  Home Assistant OS itself sets up, or that its owner can change. Write more with `sca_policies`.
 
 ## Labels
 
@@ -226,6 +269,23 @@ Defaults are shown in the tab itself; the grouping below follows it.
 | `log_files` | Extra log files: `path`, `format`, `only_future_events`, `ignore`, `restrict`, `exclude`, `age`. |
 | `log_commands` | Command output as events: `command`, `format`, `frequency`, `alias`. The command runs on the device. |
 
+#### Example: the audit log
+
+Home Assistant OS has the Linux audit daemon enabled (18.3: `auditd.service`, which writes
+`/var/log/audit/audit.log` unless the kernel is started with `audit=0`), and ships no audit rules of its own.
+The file is where the kernel's audit records go, such as AppArmor denials, and Wazuh has a log format and rules
+for it. It is not collected by default, because what it holds depends on the audit rules you load on the device. To
+collect it, add to `log_files`:
+
+```yaml
+log_files:
+  - path: /var/log/audit/audit.log
+    format: audit
+```
+
+Wazuh's rules then report what they know of it: a sample AppArmor denial line is reported by rule 80730, whose
+description says *Auditd: SELinux permission check* although the line is AppArmor's.
+
 ### File integrity monitoring
 
 | Option | Purpose |
@@ -243,15 +303,17 @@ Defaults are shown in the tab itself; the grouping below follows it.
 
 ### Rootkit checks, SCA and inventory
 
-`rootcheck_*` toggle each check and its frequency. `sca_enabled`, `sca_interval`,
-`sca_scan_on_start`, `sca_skip_nfs` and `sca_policies` control security configuration
-assessment (list your own policy files in `sca_policies`). `inventory_*` toggle the
-inventory sections and the interval.
+`rootcheck_*` toggle each check and its frequency. `sca_host_policy` switches the app's own
+checks of the device, and `sca_enabled`, `sca_interval`, `sca_scan_on_start`, `sca_skip_nfs` and
+`sca_policies` control security configuration assessment in general (list your own policy files in
+`sca_policies`, and turn `sca_enabled` on to run them). `inventory_*` toggle the inventory sections and the
+interval.
 
 | Option | Purpose |
 | --- | --- |
+| `sca_host_policy` | Assess the device against the app's own policy (see *Configuration assessment*). On by default, and independent of `sca_enabled`, which runs your own policies. Only when monitoring the device. |
 | `inventory_host_details` | Report the device's processes, listening ports, user accounts, groups and services (on by default). Only when monitoring the device. |
-| `inventory_core_packages` | Include the Python packages Home Assistant Core runs on in the inventory (on by default). They are what Wazuh's vulnerability detection can match on a Home Assistant device. Only when monitoring the device. |
+| `inventory_core_packages` | Include the Python packages Home Assistant Core and the Supervisor run on in the inventory (on by default). They are what Wazuh's vulnerability detection can match on a Home Assistant device. The app finds both through their processes, and says in its log when it has found them. Only when monitoring the device. |
 | `inventory_ports`, `inventory_processes` | The same for the app's own container; only used when `monitor_host` is off. |
 | `inventory_packages` | Installed packages of the standard package managers (dpkg, rpm, apk) and of Python and npm in their usual places. Home Assistant OS has none of its own (see *Limits*); for the app's own container it lists the Debian packages of its image. |
 
@@ -344,11 +406,13 @@ private copy has three things laid over the device's files, and only the agent s
   creates (the agent drops to it), and
 - on ARM, a `/proc/cpuinfo` with the CPU's name added (Wazuh reads the name only from there, and ARM
   kernels do not print it), and
-- an empty `/home` with one folder in it, which Wazuh reads as the place a user keeps Python
-  packages and which leads to the Python packages of Home Assistant Core. Home Assistant OS has no
-  Python of its own; Core is a container, and its file system is reachable through its processes
-  (`/proc/<pid>/root`), read-only as the agent uses it. The app keeps the link current when Core
-  restarts.
+- an empty `/home` with a folder for Home Assistant Core and one for the Supervisor, which Wazuh reads as
+  the places where a user keeps Python packages and which lead to the Python packages of those two
+  programs. Home Assistant OS's own Python has none of their packages; Core and the Supervisor are
+  containers, and their file systems are reachable through their processes (`/proc/<pid>/root`), read-only as
+  the agent uses it. The app keeps the links current when either restarts, and finds the processes by the way
+  Home Assistant's containers start them (`python3 -m homeassistant`, with or without the options before `-m`
+  that Home Assistant adds from time to time, and `python3 -m supervisor`).
 
 Nothing about the device is changed: the app's own data folder is the only thing it writes on it, the
 overlay mounts cannot propagate back (the tests check the real device's account files, `cpuinfo`, `/home`
@@ -417,6 +481,18 @@ databases are consistent. A restored backup comes back with the agent's key; see
 - **No journal events:** the app log says `Host journal found; using its machine ID...` when
   it runs in the container, or the journal is the device's own when it runs on the device. If there
   is nothing, check that the app was updated to a version declaring `journald`.
+- **No Python packages in the inventory, or the vulnerability panels show nothing:** open the app's
+  **Log** tab. It says, once, whether it found Home Assistant Core and the Supervisor
+  (`Home Assistant Core (process 1234): its Python packages are in the inventory.`) or did not
+  (`... is not among the device's processes`). In the Wazuh dashboard the packages are in the agent's
+  inventory data, under *Software*; the vulnerability panels count only packages with a known vulnerability, so
+  they can be empty while the packages are there. Before 1.0.4 the app did not recognise Core of Home Assistant
+  2026.9 and later, whose command line changed, and listed nothing.
+- **Configuration assessment is empty:** it needs the agent to run on the device (not `monitor_host: false`),
+  the option `sca_host_policy` on, and a few minutes after the app starts for the first scan to reach the manager.
+  The Log tab shows `sca: INFO: Loaded policy ...home_assistant_os.yml` and `Evaluation finished for policy`. The
+  Debian policy that comes with Wazuh is also loaded and skipped each time (`Skipping policy ... cis_debian13.yml`);
+  that is expected.
 - **Alerts carry other paths than before 1.0.3:** file integrity paths are the device's own now (for
   example `/mnt/data/supervisor/homeassistant/configuration.yaml`); adjust rules and dashboards that
   match the old ones.

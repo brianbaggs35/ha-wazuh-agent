@@ -168,6 +168,7 @@ options:
   rootcheck_check_ports: false
   rootcheck_check_if: true
   sca_enabled: false
+  sca_host_policy: true
   sca_scan_on_start: true
   sca_interval: 12h
   sca_skip_nfs: true
@@ -297,6 +298,7 @@ schema:
   rootcheck_check_ports: bool
   rootcheck_check_if: bool
   sca_enabled: bool
+  sca_host_policy: bool
   sca_scan_on_start: bool
   sca_interval: match(^[0-9]+[smhdwM]$)
   sca_skip_nfs: bool

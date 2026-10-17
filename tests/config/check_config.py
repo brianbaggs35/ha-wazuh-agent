@@ -7,6 +7,8 @@ What it guards:
   * the privileges the app asks for are exactly the reviewed list that lets the agent monitor the
     Home Assistant OS host (and so the security rating is the one that list gives)
   * versions, the pinned base image and the pinned Wazuh signing key are consistent
+  * the app's own SCA policy is a policy Wazuh can load: its structure, unique IDs in the app's range, and rules
+    in the syntax Wazuh reads (a typo here is otherwise found by the agent, at run time, on a device)
 """
 
 from __future__ import annotations
@@ -276,12 +278,125 @@ def check_files(config: dict) -> None:
             err(f"arch {arch!r}: Home Assistant only supports aarch64 and amd64")
 
 
+# --------------------------------------------------------------------------- the app's SCA policy
+SCA_POLICY = APP / "rootfs" / "usr" / "local" / "lib" / "wazuh-ha" / "sca" / "home_assistant_os.yml"
+# Wazuh's own policies use 1000 to 41065 (4.14.9), and an ID must be unique across policy files.
+SCA_CHECK_IDS = range(910000, 911000)
+SCA_CONDITIONS = {"all", "any", "none"}
+SCA_COMPARE = re.compile(r" compare (<=|>=|==|!=|<|>) -?\d+$")
+
+
+def check_sca_rule(where: str, rule, regex_type: str) -> None:
+    """One rule, in the syntax of wm_sca.c: [not ]f:|d:|p:|c:TARGET[ -> MINTERM[ && MINTERM]...]."""
+    if not isinstance(rule, str):
+        err(f"{where}: a rule must be a string")
+        return
+    text = rule[4:] if rule.startswith("not ") else rule
+    if not text.startswith(("f:", "d:", "p:", "c:")):
+        err(f"{where}: {rule!r} does not start with f:, d:, p: or c: (after an optional 'not ')")
+        return
+    target, arrow, content = text.partition(" -> ")
+    if not target[2:].strip():
+        err(f"{where}: {rule!r} has no target")
+    if "->" in target:
+        err(f"{where}: {rule!r}: the arrow needs a space on both sides")
+    if text.startswith("c:") and not arrow:
+        err(f"{where}: {rule!r}: a command rule needs a pattern for its output (without one it only says the command ran)")
+    if text.startswith("p:") and arrow:
+        err(f"{where}: {rule!r}: a process rule only checks that the process exists")
+    if not arrow:
+        return
+    for minterm in content.split(" && "):
+        minterm = minterm[1:] if minterm.startswith("!") else minterm
+        if minterm.startswith(("r:", "n:")):
+            pattern = minterm[2:]
+            if minterm.startswith("n:"):
+                if not SCA_COMPARE.search(pattern):
+                    err(f"{where}: {rule!r}: n: needs ' compare OPERATOR NUMBER' at the end")
+                    continue
+                pattern = SCA_COMPARE.sub("", pattern)
+                if "(" not in pattern:
+                    err(f"{where}: {rule!r}: n: needs a capture group for the number")
+            try:
+                re.compile(pattern)
+            except re.error as problem:
+                err(f"{where}: {rule!r}: the regular expression is not valid: {problem}")
+            if regex_type != "pcre2" and re.search(r"\[|\{|\?", pattern):
+                err(f"{where}: {rule!r}: Wazuh's own regular expressions have no classes, {{}} or ? (use regex_type: pcre2)")
+        elif not minterm:
+            err(f"{where}: {rule!r}: an empty pattern")
+
+
+def check_sca_policy() -> None:
+    if not SCA_POLICY.is_file():
+        err(f"{SCA_POLICY.relative_to(ROOT)} is missing")
+        return
+    document = load_yaml(SCA_POLICY)
+    for section in ("policy", "requirements", "checks"):
+        if section not in document:
+            err(f"sca policy: the section {section} is missing")
+            return
+    policy = document["policy"]
+    for key in ("id", "file", "name", "description"):
+        if not str(policy.get(key, "")).strip():
+            err(f"sca policy: policy.{key} is required")
+    if policy.get("file") != SCA_POLICY.name:
+        err(f"sca policy: policy.file must be {SCA_POLICY.name!r}")
+    regex_type = policy.get("regex_type", "osregex")
+    if regex_type not in ("pcre2", "osregex"):
+        err(f"sca policy: regex_type {regex_type!r} is neither pcre2 nor osregex")
+    requirements = document["requirements"]
+    for key in ("title", "description", "condition", "rules"):
+        if not requirements.get(key):
+            err(f"sca policy: requirements.{key} is required")
+    if requirements.get("condition") not in SCA_CONDITIONS:
+        err(f"sca policy: requirements.condition must be one of {sorted(SCA_CONDITIONS)}")
+    for index, rule in enumerate(requirements.get("rules") or []):
+        check_sca_rule(f"sca policy requirements.rules[{index}]", rule, regex_type)
+
+    seen: set[int] = set()
+    for index, check in enumerate(document["checks"]):
+        where = f"sca policy check #{index + 1}"
+        check_id = check.get("id")
+        if not isinstance(check_id, int) or isinstance(check_id, bool):
+            err(f"{where}: id must be an integer")
+            continue
+        where = f"sca policy check {check_id}"
+        if check_id not in SCA_CHECK_IDS:
+            err(f"{where}: id must be in {SCA_CHECK_IDS.start} to {SCA_CHECK_IDS.stop - 1} (this app's range)")
+        if check_id in seen:
+            err(f"{where}: id used twice")
+        seen.add(check_id)
+        for key in ("title", "description", "rationale", "remediation"):
+            if not str(check.get(key, "")).strip():
+                err(f"{where}: {key} is required (the dashboard shows it)")
+        if check.get("condition") not in SCA_CONDITIONS:
+            err(f"{where}: condition must be one of {sorted(SCA_CONDITIONS)}")
+        rules = check.get("rules")
+        if not isinstance(rules, list) or not rules:
+            err(f"{where}: rules must be a list with at least one rule")
+            continue
+        for rule_index, rule in enumerate(rules):
+            check_sca_rule(f"{where} rules[{rule_index}]", rule, regex_type)
+    if not seen:
+        err("sca policy: no checks")
+
+    # The path the configuration names and the file the renderer copies are this one policy.
+    context = (APP / "rootfs/usr/local/lib/wazuh-ha/ctx.jq").read_text(encoding="utf-8")
+    renderer = (APP / "rootfs/usr/local/bin/wazuh-ha-render").read_text(encoding="utf-8")
+    if f"ruleset/ha/{SCA_POLICY.name}" not in context:
+        err(f"ctx.jq does not name ruleset/ha/{SCA_POLICY.name}")
+    if f"sca/{SCA_POLICY.name}" not in renderer:
+        err(f"wazuh-ha-render does not copy sca/{SCA_POLICY.name}")
+
+
 def main() -> int:
     config = load_yaml(APP / "config.yaml")
     translations = load_yaml(APP / "translations" / "en.yaml")
     check_options(config, translations)
     check_security(config)
     check_files(config)
+    check_sca_policy()
     if (APP / "CHANGELOG.md").is_file() and (APP / "Dockerfile").is_file():
         check_versions(config)
 

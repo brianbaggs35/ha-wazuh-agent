@@ -3,8 +3,9 @@
 #
 #   wazuh-ha-render --options FILE --info FILE --outdir DIR [--skip-ossec]
 #
-# Writes DIR/ossec.conf (unless --skip-ossec), DIR/local_internal_options.conf and DIR/summary.json
-# (the non-secret description of the agent that the status page shows).
+# Writes DIR/ossec.conf (unless --skip-ossec), DIR/local_internal_options.conf, DIR/summary.json
+# (the non-secret description of the agent that the status page shows) and, when the app's own
+# configuration assessment policy is wanted, DIR/home_assistant_os.yml.
 # Exit status: 0 ok, 2 the options are invalid (reasons on stderr), 1 anything else.
 #
 # This script has no dependency on Home Assistant or the Supervisor, so the same
@@ -64,3 +65,9 @@ if [[ "${skip_ossec}" -eq 0 ]]; then
 fi
 jq -r -f "${LIB}/local_internal_options.jq" "${workdir}/ctx.json" > "${outdir}/local_internal_options.conf"
 jq -n --slurpfile c "${workdir}/ctx.json" --slurpfile i "${info}" -f "${LIB}/summary.jq" > "${outdir}/summary.json"
+# The app's own SCA policy, only when the configuration lists it (see sca.host_policy in ctx.jq): the one
+# place that decides, so the policy named in ossec.conf and the file written here cannot disagree.
+rm -f "${outdir}/home_assistant_os.yml"
+if jq -e '.sca.host_policy' "${workdir}/ctx.json" > /dev/null; then
+    cp "${LIB}/sca/home_assistant_os.yml" "${outdir}/home_assistant_os.yml"
+fi

@@ -31,6 +31,9 @@ has: <nodiff type="sregex">^/mnt/data/supervisor/homeassistant/.storage/</nodiff
 has: <nodiff type="sregex">/private/</nodiff>
 has: <policy>/mnt/data/supervisor/addon_configs/local_wazuh_agent/sca/home-assistant.yml</policy>
 has: <policy>/etc/sca/host-policy.yml</policy>
+# And the app's own policy for the device, whatever else is run.
+in-sca: <policy>ruleset/ha/home_assistant_os.yml</policy>
+in-sca: <enabled>yes</enabled>
 has: <processes>yes</processes>
 has: <ports all="yes">yes</ports>
 has: <users>yes</users>

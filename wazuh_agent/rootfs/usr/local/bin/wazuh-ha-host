@@ -7,7 +7,10 @@
 #                                this container's folders are on the host
 #   wazuh-ha-host path PATH      where PATH (a path in this container) is on the host
 #   wazuh-ha-host start          start the agent daemons inside the host's mount namespace
-#   wazuh-ha-host core-python    keep the link to Home Assistant Core's Python packages current
+#   wazuh-ha-host core-python    keep the links to the Python packages of Home Assistant Core and of the
+#                                Supervisor current
+#   wazuh-ha-host python-pid MODULE
+#                                the PID of the process started as `python3 [options] -m MODULE`, if any
 #
 # Why
 # ---
@@ -38,6 +41,9 @@ readonly OSSEC="${WAZUH_HA_OSSEC:-/var/ossec}"
 # 1 is the host's init. Only the tests point this at another process (a stand-in for the host), and
 # at a /proc/cpuinfo and a device tree model of their own (WAZUH_HA_CPUINFO, WAZUH_HA_BOARD_FILE).
 readonly HOST_PID="${WAZUH_HA_HOST_PID:-1}"
+# Where the table of processes is read when looking for Home Assistant's programs. Only the tests point this
+# at a table of their own (one directory per PID, each with the command line the kernel would show).
+readonly PROC="${WAZUH_HA_PROC:-/proc}"
 readonly HOST_PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # In the order wazuh-control starts them.
 readonly DAEMONS=(wazuh-execd wazuh-agentd wazuh-syscheckd wazuh-logcollector wazuh-modulesd)
@@ -147,58 +153,131 @@ facts() {
     return 0
 }
 
-# --- Home Assistant Core's Python packages ---------------------------------------
+# --- The Python packages of Home Assistant's own programs -------------------------
 
 # Home Assistant OS has no package manager, so the host itself has nothing for Wazuh's vulnerability
-# detection to match. What the device runs is mostly Home Assistant Core, a Python application whose
-# dependencies Wazuh does have advisories for (PyPI, through OSV). Core is a container of its own, so
-# its Python packages are in its file system, not the host's; but the app shares the host's process
-# namespace, and a process of Core shows its file system as /proc/PID/root.
+# detection to match. What the device runs is mostly Home Assistant Core and the Supervisor, Python
+# applications whose dependencies Wazuh does have advisories for (PyPI, through OSV). Each is a container
+# of its own, so its Python packages are in its file system, not the host's; but the app shares the host's
+# process namespace, and a process of a container shows that container's file system as /proc/PID/root.
 #
-# Wazuh reads Python packages only from fixed places (/home/*/.local/lib/python*/*-packages is one),
-# so hostns-start gives the agent a /home with that place in it, linked to ${DATA}/hostview/corepython.
-# The link below is what that one points at. It names a PID, and Core gets a new one every time it
-# restarts, so it is kept current from outside (the supervisor calls this every few seconds) and the
-# agent never has to be restarted for it.
+# Wazuh reads Python packages only from fixed places (/home/*/.local/lib/python*/*-packages is one), so
+# hostns-start gives the agent a /home with one such place for each program, linked to
+# ${DATA}/hostview/LINK. The links below are what those point at. A link names a PID, and a program gets a
+# new one every time it restarts, so the links are kept current from outside (the supervisor calls this
+# every few seconds) and the agent never has to be restarted for it.
+#
+# LINK:MODULE:NAME. LINK is the link's name, and with MODULE (the program is started as python3 -m MODULE,
+# see the run scripts of the two containers) the user whose home the place is in. NAME is what the log calls it.
+readonly PYTHON_PROGRAMS=(
+    "corepython:homeassistant:Home Assistant Core"
+    "supervisorpython:supervisor:Home Assistant Supervisor"
+)
 
-# The PID of a process of Home Assistant Core, or nothing. Its command line is "python3 -m homeassistant ...".
-# Only builtins read it: this looks at every process of the device, every few seconds when Core is not there.
-core_pid() {
-    local cmdline pid first second third
-    for cmdline in /proc/[0-9]*/cmdline; do
-        first="" second="" third=""
-        { IFS= read -r -d '' first && IFS= read -r -d '' second && IFS= read -r -d '' third; } 2> /dev/null < "${cmdline}"
-        if [[ "${first} ${second} ${third}" == "python3 -m homeassistant"* ]]; then
-            pid="${cmdline#/proc/}"
-            printf '%s\n' "${pid%/cmdline}"
+# The PID of a process started as `python3 [options] -m MODULE ...`, or nothing.
+#
+# What stands between the interpreter and -m is not fixed: Home Assistant's own container ran
+# `python3 -m homeassistant` until 2026.8 and runs `python3 -P -m homeassistant` since 2026.9. So the command
+# line is read the way Python reads it: options first (the few that take a value are skipped with it), and
+# the first -m names the module that runs. What follows the module belongs to the program.
+#
+# Only builtins read it: this looks at every process of the device, every few seconds while a program is not there.
+python_module_pid() {
+    local module="$1" cmdline interpreter i arg pid
+    local -a args
+    for cmdline in "${PROC}"/[0-9]*/cmdline; do
+        # A process that has just exited has no command line to read, and a kernel thread has an empty one.
+        { mapfile -d '' -t args < "${cmdline}"; } 2> /dev/null || continue
+        interpreter="${args[0]:-}"
+        interpreter="${interpreter##*/}"
+        [[ "${interpreter}" == python || "${interpreter}" == python3 || "${interpreter}" == python3.* ]] || continue
+        i=1
+        while ((i < ${#args[@]})); do
+            arg="${args[i]}"
+            if [[ "${arg}" == -m || "${arg}" =~ ^-[BbdEIiOPqRSsuvx]+m$ ]]; then
+                # -m, alone or after options that take no value (-Pm, -um): the next word is the module.
+                if [[ "${args[i + 1]:-}" == "${module}" ]]; then
+                    pid="${cmdline#"${PROC}"/}"
+                    printf '%s\n' "${pid%/cmdline}"
+                    return 0
+                fi
+                break
+            elif [[ "${arg}" == -W || "${arg}" == -X || "${arg}" == --check-hash-based-pycs ]]; then
+                i=$((i + 2))
+            elif [[ "${arg}" == -c || "${arg}" != -* ]]; then
+                # A command or a script: the program is not started as a module.
+                break
+            else
+                i=$((i + 1))
+            fi
+        done
+    done
+    return 1
+}
+
+# Where in the file system of the process PID its Python packages are, or nothing. Both are where the official
+# Python images, which Home Assistant's containers are built on, and Alpine's own Python keep them.
+python_site_packages() {
+    local pid="$1" pattern found
+    for pattern in "/usr/local/lib/python3*/site-packages" "/usr/lib/python3*/site-packages"; do
+        found="$(compgen -G "${PROC}/${pid}/root${pattern}" | head -n 1)"
+        if [[ -n "${found}" ]]; then
+            printf '%s\n' "${found}"
             return 0
         fi
     done
     return 1
 }
 
-# Whether the Python packages of Home Assistant Core are to be inventoried: on unless the option says
+# Whether the Python packages of Home Assistant's programs are to be inventoried: on unless the option says
 # otherwise (jq's // would also replace false by the default).
 core_python_enabled() {
     jq -e '.inventory_core_packages != false' "${OPTIONS}" > /dev/null 2>&1
     return
 }
 
+# note LINK MESSAGE: says what happened to a program, once. The app log should tell a user why the packages of
+# Home Assistant Core are missing from the inventory, without saying it again every few seconds.
+note() {
+    local message="$2" state="${DATA}/hostview/$1.state"
+    [[ "$(cat "${state}" 2> /dev/null)" == "${message}" ]] && return 0
+    printf '%s\n' "${message}" > "${state}"
+    printf '%s\n' "${message}"
+    return 0
+}
+
 core_python() {
-    local link="${DATA}/hostview/corepython" marker="${DATA}/hostview/corepython.enabled" pid packages
-    if ! core_python_enabled || [[ ! -d "${DATA}/hostview" ]]; then
-        rm -f "${link}" "${marker}"
+    local view="${DATA}/hostview" marker="${DATA}/hostview/pythonpackages.enabled" entry link module name pid packages
+    # The marker of version 1.0.3, from before the Supervisor's packages were inventoried too.
+    rm -f "${view}/corepython.enabled"
+    if ! core_python_enabled || [[ ! -d "${view}" ]]; then
+        for entry in "${PYTHON_PROGRAMS[@]}"; do
+            rm -f "${view}/${entry%%:*}" "${view}/${entry%%:*}.state"
+        done
+        rm -f "${marker}"
         return 0
     fi
-    : > "${marker}"
-    # Still pointing at a live Core: nothing to do.
-    [[ -d "${link}" ]] && return 0
-    rm -f "${link}"
-    pid="$(core_pid)" || return 0
-    packages="$(compgen -G "/proc/${pid}/root/usr/local/lib/python3*/site-packages" | head -n 1)"
-    if [[ -n "${packages}" ]]; then
-        ln -sfn "${packages}" "${link}"
-    fi
+    # The marker says that the packages are wanted, and tells hostns-start which links to give the agent.
+    for entry in "${PYTHON_PROGRAMS[@]}"; do
+        IFS=: read -r link module name <<< "${entry}"
+        printf '%s:%s\n' "${link}" "${module}"
+    done > "${marker}"
+    for entry in "${PYTHON_PROGRAMS[@]}"; do
+        IFS=: read -r link module name <<< "${entry}"
+        # Still pointing at a live program: nothing to do.
+        [[ -d "${view}/${link}" ]] && continue
+        rm -f "${view}/${link}"
+        if ! pid="$(python_module_pid "${module}")"; then
+            note "${link}" "${name} is not among the device's processes: its Python packages are not in the inventory while it is not running."
+            continue
+        fi
+        if ! packages="$(python_site_packages "${pid}")"; then
+            note "${link}" "${name} (process ${pid}) has no Python packages where they are expected (python3*/site-packages in /usr/local/lib or /usr/lib): they are not in the inventory."
+            continue
+        fi
+        ln -sfn "${packages}" "${view}/${link}"
+        note "${link}" "${name} (process ${pid}): its Python packages are in the inventory."
+    done
     return 0
 }
 
@@ -245,6 +324,8 @@ prepare() {
     write_account_file passwd "wazuh:x:$(id -u wazuh):$(id -g wazuh):Wazuh agent:/var/ossec:/sbin/nologin" || return 1
     write_account_file group "wazuh:x:$(id -g wazuh):" || return 1
     write_cpuinfo
+    # What the last run said about Home Assistant's programs was about that run: say it again in this one.
+    rm -f "${DATA}/hostview/"*.state
     core_python
     echo "The agent will run in the host's file system; its files are at ${hostdata}/ossec on the host."
     return 0
@@ -312,8 +393,9 @@ main() {
         path) host_path "${2:?usage: wazuh-ha-host path PATH}" ;;
         start) start ;;
         core-python) core_python ;;
+        python-pid) python_module_pid "${2:?usage: wazuh-ha-host python-pid MODULE}" ;;
         *)
-            echo "usage: wazuh-ha-host facts | path PATH | start | core-python" >&2
+            echo "usage: wazuh-ha-host facts | path PATH | start | core-python | python-pid MODULE" >&2
             return 1
             ;;
     esac

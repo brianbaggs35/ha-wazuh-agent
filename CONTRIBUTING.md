@@ -16,11 +16,14 @@ wazuh_agent/            the Home Assistant app (this is what the Supervisor sees
                               in the Home Assistant OS host's file system), the renderer, the health check
     usr/local/lib/wazuh-ha/   jq programs (validation, render context, the writers of ossec.conf), the awk
                               programs that find the host's paths and name an ARM CPU, hostns-start (runs
-                              inside the host's mount namespace) and the restart.sh that replaces Wazuh's
+                              inside the host's mount namespace), sca/ (the app's own configuration
+                              assessment policy) and the restart.sh that replaces Wazuh's
 tests/
-  config/    static checks: options vs translations, the reviewed host access and its security rating, versions
+  config/    static checks: options vs translations, the reviewed host access and its security rating, versions,
+             the app's SCA policy (structure, IDs, rule syntax)
   render/    renders fixtures inside the image; every Wazuh daemon checks the result
-  host/      unit tests of the host helpers (mount-table matching, CPU naming, reachability) in the image
+  host/      unit tests of the host helpers (mount-table matching, CPU naming, reachability, recognising
+             Home Assistant Core's and the Supervisor's processes) in the image
   e2e/       the image against a real Wazuh manager, in a container and against a stand-in for the device
   scripts/   unit tests for scripts/wazuh_update.py
 scripts/ci/  coverage.sh: every language's unit tests, with a 100% floor

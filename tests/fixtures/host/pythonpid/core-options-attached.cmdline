@@ -1,0 +1,6 @@
+python3
+-Xdev
+-Wignore
+-B
+-m
+homeassistant

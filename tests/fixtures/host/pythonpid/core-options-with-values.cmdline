@@ -1,0 +1,7 @@
+python3
+-X
+dev
+-W
+ignore
+-m
+homeassistant

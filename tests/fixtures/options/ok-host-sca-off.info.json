@@ -1,0 +1,2 @@
+{"hostname": "homeassistant", "operating_system": "Home Assistant OS 17.0", "hassos": "17.0", "homeassistant": "2026.10.1", "supervisor": "2026.10.0", "machine": "rpi5-64", "arch": "aarch64", "channel": "stable", "app_version": "1.0.3", "journal_available": true,
+ "host": {"mode": "host", "mounts": {"/data": "/mnt/data/supervisor/addons/data/local_wazuh_agent", "/config": "/mnt/data/supervisor/addon_configs/local_wazuh_agent", "/homeassistant": "/mnt/data/supervisor/homeassistant", "/ssl": "/mnt/data/supervisor/ssl", "/share": "/mnt/data/supervisor/share"}}}

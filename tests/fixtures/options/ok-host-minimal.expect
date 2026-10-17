@@ -11,3 +11,5 @@ has: <processes>yes</processes>
 has: <ignore>/mnt/data</ignore>
 no: <location>/homeassistant
 has: <packages>yes</packages>
+in-sca: <enabled>yes</enabled>
+in-sca: <policy>ruleset/ha/home_assistant_os.yml</policy>
