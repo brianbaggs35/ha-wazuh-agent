@@ -28,7 +28,7 @@ tests/
   scripts/   unit tests for scripts/wazuh_update.py
 scripts/ci/  coverage.sh: every language's unit tests, with a 100% floor
 scripts/     maintenance scripts
-.github/     CI, release and the weekly Wazuh version watch
+.github/     CI, release, the weekly Wazuh version watch and the weekly Home Assistant upstream watch
 ```
 
 ## Running the tests
@@ -47,6 +47,7 @@ python3 -m pip install coverage && scripts/ci/coverage.sh
 docker build -t ha-wazuh-agent:test wazuh_agent
 IMAGE=ha-wazuh-agent:test tests/render/run.sh        # about a minute
 IMAGE=ha-wazuh-agent:test tests/host/run.sh          # about a minute
+tests/host/upstream.sh                                # is Home Assistant still started the way the app looks for? needs GitHub
 IMAGE=ha-wazuh-agent:test tests/e2e/run.sh            # about 25 minutes; starts a real Wazuh manager
 IMAGE=ha-wazuh-agent:test tests/e2e/run.sh enroll     # a single scenario
 IMAGE=ha-wazuh-agent:test tests/e2e/run.sh host       # the agent against a stand-in for the device
@@ -55,6 +56,18 @@ IMAGE=ha-wazuh-agent:test tests/e2e/run.sh host_apparmor  # the same under the a
 
 `MANAGER_VERSION=4.14.8` runs the end-to-end tests against a different manager version.
 `E2E_KEEP=1` leaves the containers behind for debugging.
+
+## What the app assumes about Home Assistant
+
+The app finds Home Assistant Core and the Supervisor on the device by the command line their containers start them
+with (`python3 [options] -m homeassistant`, `python3 -m supervisor`), and reads their Python packages through
+`/proc/<pid>/root`. Home Assistant decides that, and changed it once without notice (Core 2026.9 added `-P`, which
+emptied the package inventory of 1.0.3). Two things guard it: `tests/host/run.sh` recognises the command lines
+of both containers' run scripts as they were at their tags (`tests/fixtures/host/pythonpid/`), and the weekly
+*Home Assistant upstream watch* workflow (`tests/host/upstream.sh`) reads the run scripts as they are now and fails
+when the app would no longer recognise them. When it fails, teach `python_module_pid` in `wazuh-ha-host` the new
+form, and add the command line to the fixtures. Do not write a stand-in's command line from memory: copy it from the run
+script, with the tag it came from.
 
 ## Repository settings the workflows rely on
 
