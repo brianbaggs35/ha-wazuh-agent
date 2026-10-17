@@ -11,6 +11,86 @@ as a normal app update.
 Before updating the app, check that your Wazuh manager is not older than the agent
 it will receive (see "Updating" in the documentation).
 
+## [1.0.4] - 2026-10-17
+
+Wazuh agent **4.14.9**.
+
+### Fixed
+
+- **Home Assistant's Python packages were missing from the inventory, so vulnerability detection had nothing to
+  match.** Version 1.0.3 found Home Assistant Core by its command line, `python3 -m homeassistant`. Since Home
+  Assistant 2026.9 its container starts as `python3 -P -m homeassistant`, which 1.0.3 did not recognise, so it
+  never linked Core's packages to the agent: of the roughly 1,600 Python packages Core runs on, none reached the
+  Wazuh dashboard's *Software* inventory or its vulnerability detection. The app now reads the command line the
+  way Python does (options first, the first `-m` names the module), so this form, the older one and the
+  variations Python allows are all recognised, and it says in its log whether it found Core
+  (`Home Assistant Core (process 1234): its Python packages are in the inventory.`) or did not. The 1.0.3
+  end-to-end test had the same blind spot: its stand-in for Core was a process named as 1.0.3 expected, not started
+  the way Core's container starts it. Checked now against the real thing: with the real Home Assistant Core
+  2026.10.2 container on the real Home Assistant OS 18.3 file system, the manager's inventory goes from 0 packages
+  (1.0.3) to 1,627 (this release), which is the number of Python packages in that image.
+- Documentation that was not true: the boot partition (`/mnt/boot`) does not hold the debug login's SSH keys, it
+  is where a `CONFIG` folder with them is put to be imported (Home Assistant OS then copies them to
+  `/root/.ssh/authorized_keys` and removes the folder), and Home Assistant OS does have a Python of its own on
+  some builds (see *Known limitations*).
+
+### Added
+
+- **Configuration assessment of the device.** The Wazuh dashboard's *Configuration Assessment* was empty because
+  the assessment was off by default and the only policy in the agent, Wazuh's CIS benchmark for Debian 13, does
+  not apply to Home Assistant OS. The app now ships its own policy, `home_assistant_os`, with eight checks of
+  things Home Assistant OS sets up or that its owner can change: debug SSH access (port 22222) is off, no SSH
+  key waits on the boot partition, only root has user ID 0, the Docker socket is not open to everyone, the data
+  partition is less than 90% full, the kernel's protections for links and files in shared directories are on,
+  no file in `/etc` can be changed by every account, and the Wazuh manager cannot run commands on the device
+  through the agent. Every check carries what it looked at, why it matters and what to do. The new option
+  `sca_host_policy` (on by default, only when monitoring the device) switches it. It is independent of
+  `sca_enabled`, which keeps running policies of your own (`sca_policies`), so devices where 1.0.2 or 1.0.3
+  saved `sca_enabled: false` are assessed after the update without touching the configuration.
+- **The Python packages of the Home Assistant Supervisor** are in the inventory too (option
+  `inventory_core_packages`, which now covers Core and the Supervisor): the Supervisor is a Python application
+  with dependencies of its own. A program that starts after the agent is found without restarting the agent.
+- Documentation: how to collect the audit log that Home Assistant OS writes (`log_files` with the `audit` format),
+  checked on the real Home Assistant OS 18.3 file system with a sample AppArmor denial, which the manager reports.
+- Tests: the end-to-end suite starts its stand-ins for Core and the Supervisor with the real command lines and
+  the Python packages where the official Python image keeps them, checks that a program that starts later is
+  found, that its packages follow it when it restarts, and that the manager records every check of the new policy
+  with the right result (and sees a change on the device at the next assessment). Unit tests recognise 22 command
+  lines, among them both forms of Core's container's (as its run script has them at the tags from 2025.6.0 to
+  2026.10.2) and the Supervisor's; the configuration guard checks the policy's structure, check IDs and rule syntax.
+
+### Changed
+
+- `sca_policies` (your own policy files) run only while `sca_enabled` is on. Before, they were listed in the
+  generated configuration whatever the switch said; with the assessment off they never ran, and now that the
+  app's own policy can switch the assessment on by itself, listing them would have run them.
+- The agent's log says `Skipping policy ... cis_debian13.yml` at each assessment: Wazuh's own Debian policy is
+  loaded and does not apply to Home Assistant OS. That is expected.
+
+### Upgrading from 1.0.3
+
+- Nothing to configure. After the update and a restart the app's log shows which of Core and the Supervisor it
+  found, the Python packages appear in the inventory after the next inventory scan, and the first
+  configuration assessment reaches the manager a few minutes after the start.
+- A check that *fails* reports a state: with debug SSH access enabled on purpose, the first one will fail.
+  Set `sca_host_policy` to `false` to stop the assessment.
+- Option values you saved keep their values.
+
+### Known limitations
+
+- Wazuh's vulnerability detection reports on packages: Home Assistant OS has none of its own and is not an
+  operating system Wazuh has vulnerability content for, so it reports nothing about the OS's own software. What
+  it can match is Python (Core's and the Supervisor's packages; not those of apps). Whether it matches them on an
+  operating system it does not know is read from Wazuh's source, not observed: the vulnerability detection needs
+  Wazuh's indexer and feed, which the tests do not run. It only lists packages that are vulnerable, so an empty
+  vulnerability panel next to a full inventory is normal.
+- Wazuh's Docker listener needs the `docker` Python module, which Home Assistant OS does not have (some builds carry
+  a small Python 3.12 without it and without SSL, the generic x86-64 build none).
+- The automated tests use a stand-in for the device and for Home Assistant's containers, not Home Assistant
+  itself: the Supervisor, its Protection mode handling, the way it installs the AppArmor profile and ingress are not
+  part of them. For this release the app was also checked by hand, outside the automated tests, against the real
+  Home Assistant OS 18.3 file system (x86-64) and the real Core and Supervisor images, not on a device.
+
 ## [1.0.3] - 2026-10-16
 
 Wazuh agent **4.14.9**.
