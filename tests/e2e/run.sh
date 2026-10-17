@@ -4,7 +4,7 @@
 #   IMAGE=ha-wazuh-agent:test tests/e2e/run.sh [scenario ...]
 #
 # Scenarios: validation enroll journal fim config supervisor ui capabilities upgrade crash duplicate reenroll
-#            host host_cpu host_control host_unavailable host_incompatible host_packages host_apparmor password
+#            host host_cpu host_control host_unavailable host_incompatible host_packages host_sca host_apparmor password
 #            (default: all, in this order. password is last: it makes the manager require a registration
 #            password, which every enrollment after it would then fail without.)
 #   host_apparmor loads the app's AppArmor profile and so only runs where AppArmor is enforced and
@@ -668,8 +668,8 @@ scenario_host() {
         "$(docker exec "${c}" wazuh-ha-host path /homeassistant)" "/mnt/data/supervisor/homeassistant"
 
     # --- what the manager records about this agent
-    check_equal "the agent's address is the host's (${host_ip})" \
-        "$(manager_item "/agents?q=name=${name}&select=ip" '.ip')" "${host_ip}"
+    wait_for 120 "the manager has the agent's address" manager_knows_agent_ip "${name}"
+    check_equal "the agent's address is the host's (${host_ip})" "$(manager_agent_ip "${name}")" "${host_ip}"
     check_equal "the agent's operating system is the host's (${HOST_OS_NAME})" \
         "$(manager_item "/agents?q=name=${name}&select=os.name" '.os.name')" "${HOST_OS_NAME}"
     check_different "... and not the container image's (${image_os})" \
@@ -795,7 +795,8 @@ scenario_host_control() {
     id="$(manager_agent_id "${name}")"
     container_ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${c}")"
     os_name="$(manager_item "/syscollector/${id}/os" '.os.name')"
-    check_equal "the agent's address is the container's" "$(manager_item "/agents?q=name=${name}&select=ip" '.ip')" "${container_ip}"
+    wait_for 120 "the manager has the agent's address" manager_knows_agent_ip "${name}"
+    check_equal "the agent's address is the container's" "$(manager_agent_ip "${name}")" "${container_ip}"
     [[ "${os_name}" == *Debian* ]] && pass "the operating system is the container image's (${os_name})" \
         || fail "the operating system is the container image's (${os_name})"
     check_different "... and not the host's" "${os_name}" "${HOST_OS_NAME}"
@@ -863,22 +864,17 @@ CASES
 
 # ---------------------------------------------------------------------------
 scenario_host_packages() {
-    log "host_packages: Home Assistant Core's Python packages are in the inventory, and follow Core when it restarts"
-    local vol="e2e-hpkg-data-${E2E_ID}" h="e2e-hpkg-${E2E_ID}" core="e2e-hpkg-core-${E2E_ID}" c="e2e-hpkg-agent-${E2E_ID}"
-    local name="e2e-hpkg-agent"
-    # A short inventory interval, so a change in Core's packages shows within the test.
+    log "host_packages: the Python packages of Home Assistant Core and of the Supervisor are in the inventory, whenever they start"
+    local vol="e2e-hpkg-data-${E2E_ID}" h="e2e-hpkg-${E2E_ID}" core="e2e-hpkg-core-${E2E_ID}" sup="e2e-hpkg-sup-${E2E_ID}"
+    local c="e2e-hpkg-agent-${E2E_ID}" name="e2e-hpkg-agent"
+    # A short inventory interval, so a change in the packages shows within the test.
     write_options "${vol}" "{\"monitor_host\": true, \"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", \"inventory_interval\": \"20s\", ${FAST}}"
     host_start "${h}" "${vol}" || { fail "the stand-in host started"; return 0; }
-    # A stand-in for Home Assistant Core: a process called as Core's is (python3 -m homeassistant), in a
-    # container of its own with the Python packages where the official image keeps them. It holds a
-    # package with a known advisory, so that it is one worth finding.
-    docker run -d --name "${core}" --network "${E2E_NET}" --pid=host debian:bookworm-slim bash -c '
-        site=/usr/local/lib/python3.13/site-packages
-        mkdir -p "${site}/aiohttp-3.9.0.dist-info" "${site}/requests-2.19.0.dist-info"
-        printf "Name: aiohttp\nVersion: 3.9.0\n" > "${site}/aiohttp-3.9.0.dist-info/METADATA"
-        printf "Name: requests\nVersion: 2.19.0\n" > "${site}/requests-2.19.0.dist-info/METADATA"
-        exec -a "python3 -m homeassistant --config /config" sleep infinity' > /dev/null
-    track_container "${core}"
+    # Core as Home Assistant's container starts it (rootfs/etc/services.d/home-assistant/run of Core 2026.9 and
+    # later: python3 -P -m homeassistant --config /config; before, without -P), in a container of its own with the
+    # Python packages where the official image keeps them. It holds a package with a known advisory, so that it is
+    # one worth finding. The agent starts with Core running and the Supervisor not yet there, as at a boot.
+    python_program_start "${core}" "-P -m homeassistant --config /config" aiohttp:3.9.0 requests:2.19.0
     host_agent_start "${c}" "${vol}" "${h}"
     if ! wait_for 180 "agent active" manager_agent_active "${name}"; then
         fail "the agent enrolled and is Active at the manager"
@@ -888,32 +884,51 @@ scenario_host_packages() {
     local id
     id="$(manager_agent_id "${name}")"
 
-    package_in_inventory() { # NAME VERSION -> succeeds when the manager lists that Python package at that version
-        local package="$1" version="$2"
-        manager_api "/syscollector/${id}/packages?search=${package}&limit=5" \
-            | jq -e --arg version "${version}" '.data.affected_items | map(select(.version == $version and .format == "pypi")) | length > 0'
+    package_in_inventory() { # NAME VERSION USER -> succeeds when the manager lists that Python package at that version, found in USER's home
+        local package="$1" version="$2" user="$3"
+        manager_api "/syscollector/${id}/packages?search=${package}&limit=20" \
+            | jq -e --arg version "${version}" --arg where "/home/${user}/" \
+                '.data.affected_items | map(select(.version == $version and .format == "pypi" and (.location | startswith($where)))) | length > 0'
         return
     }
-    if wait_for 150 "Core's packages" package_in_inventory aiohttp 3.9.0; then
+
+    # --- Home Assistant Core, with the command line of today's container
+    if wait_for 150 "Core's packages" package_in_inventory aiohttp 3.9.0 homeassistant; then
         pass "a Python package of Home Assistant Core is in the inventory (aiohttp 3.9.0)"
     else
         fail "a Python package of Home Assistant Core is in the inventory (aiohttp 3.9.0)"
         dump_agent "${c}"
         return 0
     fi
-    package_in_inventory requests 2.19.0 > /dev/null \
+    package_in_inventory requests 2.19.0 homeassistant > /dev/null \
         && pass "so are the others" || fail "so are the others"
+    container_log_matches "${c}" 'Home Assistant Core \(process [0-9]+\): its Python packages are in the inventory' \
+        && pass "the app log says Core was found" || fail "the app log says Core was found"
     container_log_has "${c}" "Could not mount a /home" \
         && fail "the agent got a /home for the packages" || pass "the agent got a /home for the packages"
     check_equal "the host's own /home is untouched (the agent's /home is private)" \
-        "$(docker exec "${h}" bash -c 'ls -A /home | wc -l')" "$(docker run --rm --entrypoint bash debian:bookworm-slim -c 'ls -A /home | wc -l')"
+        "$(docker exec "${h}" bash -c 'ls -A /home | wc -l')" "$(docker run --rm --entrypoint bash "${HOST_IMAGE}" -c 'ls -A /home | wc -l')"
 
-    # Core restarts: it gets a new process, and the packages it has now are the ones to find.
+    # --- the Supervisor starts after the agent, and is found without restarting it
+    container_log_has "${c}" "Home Assistant Supervisor is not among the device's processes" \
+        && pass "while the Supervisor is not running, the app log says so" || fail "while the Supervisor is not running, the app log says so"
+    python_program_start "${sup}" "-m supervisor" docker:7.1.0
+    if wait_for 150 "the Supervisor's packages" package_in_inventory docker 7.1.0 supervisor; then
+        pass "a program that starts after the agent is found, and its packages are in the inventory (docker 7.1.0, the Supervisor's)"
+    else
+        fail "a program that starts after the agent is found, and its packages are in the inventory (docker 7.1.0, the Supervisor's)"
+    fi
+    package_in_inventory docker 7.1.0 homeassistant > /dev/null \
+        && fail "each program's packages are under its own name" || pass "each program's packages are under its own name"
+    container_log_matches "${c}" 'Home Assistant Supervisor \(process [0-9]+\): its Python packages are in the inventory' \
+        && pass "the app log says the Supervisor was found" || fail "the app log says the Supervisor was found"
+
+    # --- Core restarts: it gets a new process, and the packages it has now are the ones to find.
     local before after
     before="$(docker exec "${c}" readlink /data/hostview/corepython)"
     docker restart "${core}" > /dev/null
     docker exec "${core}" bash -c '
-        site=/usr/local/lib/python3.13/site-packages
+        site="$(python3 -c "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])")"
         mkdir -p "${site}/flask-3.0.0.dist-info"
         printf "Name: flask\nVersion: 3.0.0\n" > "${site}/flask-3.0.0.dist-info/METADATA"'
     if wait_for 120 "the link follows Core" bash -c "[[ \"\$(docker exec ${c} readlink /data/hostview/corepython)\" != \"${before}\" ]]"; then
@@ -923,9 +938,114 @@ scenario_host_packages() {
     else
         fail "after Core restarts the agent's link points at its new process"
     fi
-    wait_for 120 "a package that is new since" package_in_inventory flask 3.0.0 \
+    wait_for 120 "a package that is new since" package_in_inventory flask 3.0.0 homeassistant \
         && pass "the agent sees Core's packages as they are after the restart (flask 3.0.0, installed meanwhile)" \
         || fail "the agent sees Core's packages as they are after the restart (flask 3.0.0, installed meanwhile)"
+
+    # --- the option turns it off. In a data folder of its own: the running agent keeps its links current every few seconds.
+    check_equal "told not to inventory them, the app keeps no link and no marker for them, and says nothing" \
+        "$(docker run --rm --entrypoint bash "${IMAGE}" -c '
+            mkdir -p /tmp/d/hostview
+            touch /tmp/d/hostview/corepython.state /tmp/d/hostview/supervisorpython.state /tmp/d/hostview/pythonpackages.enabled
+            ln -s /nowhere /tmp/d/hostview/corepython
+            echo "{\"inventory_core_packages\": false}" > /tmp/o.json
+            out="$(OPTIONS_FILE=/tmp/o.json WAZUH_HA_DATA=/tmp/d wazuh-ha-host core-python)"
+            echo "files=$(ls /tmp/d/hostview | wc -l) said=${out:-nothing}"')" "files=0 said=nothing"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# sca_sees_the_change AGENT-ID: the manager has the effect of what scenario_host_sca changed on the device
+sca_sees_the_change() {
+    local id="$1"
+    [[ "$(sca_result "${id}" 910001)" == passed && "$(sca_result "${id}" 910004)" == failed ]]
+    return
+}
+
+scenario_host_sca() {
+    log "host_sca: the device is assessed against the app's Home Assistant OS policy, and the manager has the results"
+    local vol="e2e-hsca-data-${E2E_ID}" h="e2e-hsca-${E2E_ID}" c="e2e-hsca-agent-${E2E_ID}" name="e2e-hsca-agent"
+    # Nothing here sets sca_enabled or sca_host_policy: what a user who changed nothing gets. A short interval, so that
+    # a change on the device is assessed again within the test.
+    write_options "${vol}" "{\"monitor_host\": true, \"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", \"sca_interval\": \"1m\", ${FAST}}"
+    host_start "${h}" "${vol}" || { fail "the stand-in host started"; return 0; }
+    host_agent_start "${c}" "${vol}" "${h}"
+    if ! wait_for 180 "agent active" manager_agent_active "${name}"; then
+        fail "the agent enrolled and is Active at the manager"
+        dump_agent "${c}"
+        return 0
+    fi
+    host_settle "${c}"
+    local id
+    id="$(manager_agent_id "${name}")"
+
+    # --- the policy is where the agent reads it, and Wazuh accepted it
+    assert "the app wrote its policy next to the agent's files" docker exec "${c}" test -f /data/ossec/ruleset/ha/home_assistant_os.yml
+    if wait_for 120 "the policy is loaded" container_log_matches "${c}" "sca: INFO: Loaded policy '.*/ruleset/ha/home_assistant_os.yml'"; then
+        pass "the agent loaded the policy"
+    else
+        fail "the agent loaded the policy"
+        dump_agent "${c}"
+        return 0
+    fi
+    container_log_matches "${c}" "sca: (ERROR|WARNING)" \
+        && fail "Wazuh found nothing wrong with the policy (no SCA warning or error in the log)" \
+        || pass "Wazuh found nothing wrong with the policy (no SCA warning or error in the log)"
+    container_log_matches "${c}" "sca: INFO: Skipping policy '.*cis_debian13.yml'" \
+        && pass "Wazuh's own Debian policy is left out: this is not Debian" || fail "Wazuh's own Debian policy is left out: this is not Debian"
+    check_equal "the status page says the configuration assessment is on" "$(ui_json "${h}" /api/status .summary.modules.sca)" true
+
+    # --- the manager has the results
+    if wait_for 240 "the manager has every check's result" sca_has_all_results "${id}"; then
+        pass "the manager has the result of all 8 checks of the policy"
+    else
+        fail "the manager has the result of all 8 checks of the policy (has: $(sca_checks "${id}" | tr '\n' ' '))"
+        dump_agent "${c}"
+        return 0
+    fi
+    check_equal "and lists the policy by its name" \
+        "$(manager_item "/sca/${id}" '.policy_id + ": " + .name')" "home_assistant_os: Home Assistant OS device"
+
+    # --- and they are right about the device. The stand-in has an SSH key for root and a Docker socket of mode 0660,
+    # no key waiting on the boot partition and no second account with user ID 0.
+    check_equal "debug SSH access is on (root has a key): the check fails" "$(sca_result "${id}" 910001)" failed
+    check_equal "no SSH key waits on the boot partition" "$(sca_result "${id}" 910002)" passed
+    check_equal "only root has user ID 0" "$(sca_result "${id}" 910003)" passed
+    check_equal "the Docker socket is not open to everyone" "$(sca_result "${id}" 910004)" passed
+    check_equal "the Wazuh manager cannot run commands through the agent" "$(sca_result "${id}" 910008)" passed
+    # These depend on the machine the test runs on, so what they should say is worked out from the machine itself.
+    local used expected protections writable
+    used="$(docker exec "${h}" bash -c "df -P /mnt/data | awk 'NR==2 {print \$5}' | tr -d %")"
+    expected=passed
+    [[ "${used}" -ge 90 ]] && expected=failed
+    check_equal "the data partition is ${used}% full: the check says ${expected}" "$(sca_result "${id}" 910005)" "${expected}"
+    protections="$(docker exec "${h}" bash -c 'cat /proc/sys/fs/protected_hardlinks /proc/sys/fs/protected_symlinks /proc/sys/fs/protected_regular /proc/sys/fs/protected_fifos' | paste -sd' ')"
+    expected=failed
+    [[ "${protections}" =~ ^1\ 1\ [12]\ [12]$ ]] && expected=passed
+    check_equal "the kernel's protections are '${protections}': the check says ${expected}" "$(sca_result "${id}" 910006)" "${expected}"
+    writable="$(docker exec "${h}" bash -c 'find /etc -xdev -type f -perm -0002 | wc -l')"
+    expected=failed
+    [[ "${writable}" -eq 0 ]] && expected=passed
+    check_equal "${writable} files in /etc can be written by everyone: the check says ${expected}" "$(sca_result "${id}" 910007)" "${expected}"
+
+    # --- the next assessment sees what changed: the key is removed, the socket opened to everyone
+    docker exec "${h}" bash -c 'rm -f /root/.ssh/authorized_keys; chmod 666 /run/docker.sock'
+    if wait_for 240 "the next assessment" sca_sees_the_change "${id}"; then
+        pass "the next assessment sees the changes (SSH access off: passes; Docker socket open to everyone: fails)"
+    else
+        fail "the next assessment sees the changes (910001 is '$(sca_result "${id}" 910001)', 910004 is '$(sca_result "${id}" 910004)')"
+    fi
+
+    # --- switched off, the policy is not run and not left behind
+    write_options "${vol}" "{\"monitor_host\": true, \"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", \"sca_host_policy\": false, ${FAST}}"
+    host_agent_start "${c}" "${vol}" "${h}"
+    if wait_for 150 "the module is off" container_log_has "${c}" "sca: INFO: Module disabled. Exiting."; then
+        pass "with sca_host_policy off (and sca_enabled off) the SCA module does not run"
+    else
+        fail "with sca_host_policy off (and sca_enabled off) the SCA module does not run"
+        dump_agent "${c}"
+    fi
+    assert "and the policy is removed from the agent's files" bash -c "! docker exec ${c} test -e /data/ossec/ruleset/ha"
     return 0
 }
 
@@ -1059,7 +1179,7 @@ scenario_host_apparmor() {
 # ---------------------------------------------------------------------------
 main() {
     local scenarios=("$@")
-    [[ ${#scenarios[@]} -gt 0 ]] || scenarios=(validation enroll journal fim config supervisor ui capabilities upgrade crash duplicate reenroll host host_cpu host_control host_unavailable host_incompatible host_packages host_apparmor password)
+    [[ ${#scenarios[@]} -gt 0 ]] || scenarios=(validation enroll journal fim config supervisor ui capabilities upgrade crash duplicate reenroll host host_cpu host_control host_unavailable host_incompatible host_packages host_sca host_apparmor password)
 
     log "image under test: ${IMAGE}   manager: wazuh-manager ${MANAGER_VERSION}"
     # Validation needs no manager; everything else does.

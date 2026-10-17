@@ -9,6 +9,7 @@
 #                                    warning that is expected (and a "# ..." line is a comment).
 # tests/fixtures/options/bad-*.json  must be refused (exit 2) with the messages listed
 #                                    as has: lines in the matching .expect file
+# An "in-sca: TEXT" line looks only inside the <sca> section (where <enabled> would be ambiguous).
 # NAME.info.json next to a fixture replaces the default runtime info for it. The ok-host* fixtures
 # describe the agent running in the Home Assistant OS host's file system (where the app's folders are
 # at other paths), ok-host-unavailable one that cannot reach it.
@@ -33,7 +34,7 @@ fail() {
     return 0
 }
 
-# render NAME [INFO [LABEL]] -> splits the container's output into ${WORK}/LABEL/{rc,stderr,ossec,lio,daemons}
+# render NAME [INFO [LABEL]] -> splits the container's output into ${WORK}/LABEL/{rc,stderr,ossec,lio,files,daemons}
 # INFO is a runtime info file, relative to the fixtures; the default is NAME.info.json next to the
 # fixture, or else info.json. LABEL (default NAME) names the output.
 render() {
@@ -52,9 +53,10 @@ render() {
         /^@@@STDERR$/ { out = d "/stderr"; next }
         /^@@@OSSEC$/  { out = d "/ossec"; next }
         /^@@@LIO$/    { out = d "/lio"; next }
+        /^@@@FILES$/  { out = d "/files"; next }
         /^@@@DAEMONS$/{ out = d "/daemons"; next }
         out           { print > out }' "${dir}/raw"
-    touch "${dir}/stderr" "${dir}/ossec" "${dir}/lio" "${dir}/daemons"
+    touch "${dir}/stderr" "${dir}/ossec" "${dir}/lio" "${dir}/files" "${dir}/daemons"
     return 0
 }
 
@@ -81,8 +83,12 @@ check_expectations() { # NAME FILE-TO-SEARCH
         case "${kind}" in
             has) grep -qF -- "${text}" "${file}" && pass "${name}: has ${text}" || fail "${name}: expected ${text}" ;;
             no) grep -qF -- "${text}" "${file}" && fail "${name}: must not contain ${text}" || pass "${name}: no ${text}" ;;
+            in-sca)
+                sed -n '/<sca>/,/<\/sca>/p' "${file}" > "${file}.sca"
+                grep -qF -- "${text}" "${file}.sca" && pass "${name}: <sca> has ${text}" || fail "${name}: <sca> should have ${text}"
+                ;;
             allow | "#"*) ;;
-            *) fail "${name}: unknown expectation '${kind}' in ${expect} (use has:, no:, allow: or #)" ;;
+            *) fail "${name}: unknown expectation '${kind}' in ${expect} (use has:, no:, in-sca:, allow: or #)" ;;
         esac
     done < "${expect}"
     return 0
@@ -117,6 +123,16 @@ for fixture in "${FIXTURES}"/options/ok-*.json; do
         pass "${name}: every Wazuh daemon accepts it (-t) without warnings"
     fi
     check_expectations "${name}" "${dir}/ossec"
+    # The policy the configuration names and the policy file that is written are one decision: never one without the other.
+    if grep -qF 'ruleset/ha/home_assistant_os.yml' "${dir}/ossec"; then
+        grep -qx 'home_assistant_os.yml' "${dir}/files" \
+            && pass "${name}: the app's SCA policy is named in ossec.conf and written" \
+            || fail "${name}: ossec.conf names the app's SCA policy but it was not written"
+    else
+        grep -qx 'home_assistant_os.yml' "${dir}/files" \
+            && fail "${name}: the app's SCA policy was written but ossec.conf does not name it" \
+            || pass "${name}: no app SCA policy named, none written"
+    fi
 done
 
 for fixture in "${FIXTURES}"/options/bad-*.json; do
@@ -137,7 +153,8 @@ check_drift() { # LABEL FIXTURE INFO
     render "${fixture}" "${info}" "${label}-unset"
     render zz-defaults "${info}" "${label}-defaults"
     if diff -u "${WORK}/${label}-unset/ossec" "${WORK}/${label}-defaults/ossec" > "${WORK}/${label}.diff" \
-        && diff -u "${WORK}/${label}-unset/lio" "${WORK}/${label}-defaults/lio" >> "${WORK}/${label}.diff"; then
+        && diff -u "${WORK}/${label}-unset/lio" "${WORK}/${label}-defaults/lio" >> "${WORK}/${label}.diff" \
+        && diff -u "${WORK}/${label}-unset/files" "${WORK}/${label}-defaults/files" >> "${WORK}/${label}.diff"; then
         pass "${label}: options left unset render exactly like the config.yaml defaults"
     else
         fail "${label}: the renderer's built-in defaults differ from config.yaml"

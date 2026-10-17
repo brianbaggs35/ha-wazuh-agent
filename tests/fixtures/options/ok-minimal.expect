@@ -9,3 +9,5 @@ has: <filter field="_TRANSPORT">^kernel$</filter>
 no: <authorization_pass_path>
 no: <server_ca_path>
 no: ^addon_
+in-sca: <enabled>no</enabled>
+no: home_assistant_os.yml

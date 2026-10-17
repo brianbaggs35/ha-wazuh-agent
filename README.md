@@ -44,9 +44,10 @@ is the app's [documentation](wazuh_agent/DOCS.md).
   failed web logins), the Supervisor and app errors.
 - Watches the Home Assistant **configuration and certificates**, the device's `/etc` and binaries, the
   boot partition and root's SSH keys for changes, without ever sending the content of secrets.
-- Runs **rootkit checks**, and configuration assessment with your own policies, against the device.
-- Inventories the **Python packages Home Assistant Core runs on**, which is what Wazuh's vulnerability
-  detection can match on a device with no package manager of its own.
+- Runs **rootkit checks** against the device, and **configuration assessment**: the app's own checks of the
+  device (debug SSH access, accounts, the Docker socket, free space, kernel protections) and any policy of yours.
+- Inventories the **Python packages Home Assistant Core and the Supervisor run on**, which is what Wazuh's
+  vulnerability detection can match on a device with no package manager of its own.
 - Labels every event with the Home Assistant OS, Core and Supervisor versions.
 - A read-only **Wazuh Agent** status page in the Home Assistant sidebar: running or stopped,
   connected or not, registration, update availability, a connection test and the agent log.
@@ -77,7 +78,7 @@ is released. See the [changelog](wazuh_agent/CHANGELOG.md).
 | Base image | Home Assistant's Debian (trixie) base, pinned by digest. |
 | Agent | Installed from Wazuh's official apt repository; the build fails if the repository's signing key differs from the pinned fingerprint. |
 | Coverage | 100% of lines and branches for the Python, Go and web code, enforced in CI (`scripts/ci/coverage.sh`). Shell and jq cannot be measured by those tools; the render and end-to-end tests cover them. |
-| Tests | Render tests (every Wazuh daemon checks the generated configuration), unit tests of the helpers that find the device's paths and name an ARM CPU, and end-to-end tests against the official `wazuh-manager` image: enrollment, persistence across restarts and updates, journal collection and filtering, file integrity, registration passwords, re-enrollment, and the agent running against a stand-in for the Home Assistant OS device (what the manager records is the device's, the real device is left untouched, and what happens when the device cannot be reached). |
+| Tests | Render tests (every Wazuh daemon checks the generated configuration), unit tests of the helpers that find the device's paths and name an ARM CPU, and end-to-end tests against the official `wazuh-manager` image: enrollment, persistence across restarts and updates, journal collection and filtering, file integrity, registration passwords, re-enrollment, and the agent running against a stand-in for the Home Assistant OS device (what the manager records is the device's, the real device is left untouched, and what happens when the device cannot be reached), with stand-ins for Home Assistant Core and the Supervisor that are started with the command lines of their real containers (their Python packages in the inventory, wherever and whenever they start) and the configuration assessment of the device checked result by result. |
 | Architectures | `amd64` and `aarch64`, each built and tested on a native runner. |
 | Scans | Trivy on the image (vulnerabilities, a gate on fixable HIGH and CRITICAL), configuration and secrets, plus an SBOM per release; SonarQube Cloud analysis of the code with its quality gate. |
 | Releases | Published only after the exact images pass the tests and scans; the multi-arch image is signed with Sigstore and verified again from the registry. |

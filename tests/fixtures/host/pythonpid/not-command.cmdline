@@ -1,0 +1,5 @@
+python3
+-c
+import homeassistant
+-m
+homeassistant

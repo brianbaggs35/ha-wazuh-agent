@@ -1,0 +1,1 @@
+{"manager_address": "wazuh.example.lan", "sca_enabled": true, "sca_host_policy": false, "sca_policies": ["/config/sca/mine.yml"]}

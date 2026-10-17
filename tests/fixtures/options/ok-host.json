@@ -8,5 +8,6 @@
   "fim_directories": [{"path": "/homeassistant", "realtime": true}, {"path": "/ssl"}, {"path": "/etc", "realtime": true, "report_changes": true}, {"path": "/media/recordings"}],
   "fim_ignore": ["/homeassistant/www"],
   "fim_nodiff_sregex": ["^/ssl/", "^/homeassistant/.storage/", "/private/"],
+  "sca_enabled": true,
   "sca_policies": ["/config/sca/home-assistant.yml", "/etc/sca/host-policy.yml"]
 }

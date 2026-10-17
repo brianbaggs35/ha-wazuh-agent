@@ -1,0 +1,6 @@
+# What 1.0.2 and 1.0.3 saved for everybody who opened the Configuration tab: sca_enabled false, and the option
+# that did not exist yet is simply missing. The device is assessed all the same, and the policy files that
+# were listed under a switch that is off are not run.
+in-sca: <enabled>yes</enabled>
+in-sca: <policy>ruleset/ha/home_assistant_os.yml</policy>
+no: mine.yml

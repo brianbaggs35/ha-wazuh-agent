@@ -1,0 +1,6 @@
+python3
+-P
+-m
+homeassistant
+--config
+/config

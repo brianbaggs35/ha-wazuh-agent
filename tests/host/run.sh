@@ -11,6 +11,10 @@
 # tests/fixtures/host/cpuname/NAME.{cpuinfo,expect}        a /proc/cpuinfo and the CPU name expected from
 #                                                          it (empty: it already has one). NAME.board
 #                                                          and NAME.arch are optional inputs.
+# tests/fixtures/host/pythonpid/NAME.{cmdline,expect}      the command line of a process (one argument per
+#                                                          line) and which of Home Assistant's Python
+#                                                          programs, if any, it is (the modules expected to
+#                                                          match, separated by spaces; empty: none)
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -74,6 +78,49 @@ check_cpuname() {
     return 0
 }
 
+# Which of Home Assistant's Python programs a process is, from its command line the way the kernel shows it.
+check_python_pid() {
+    local name="$1" expect out
+    expect="$(first_line "${FIXTURES}/pythonpid/${name}.expect")"
+    out="$(docker run --rm --entrypoint bash -v "${FIXTURES}:/f:ro" -e WAZUH_HA_PROC=/p "${IMAGE}" -c '
+        mkdir -p /p/4242
+        # The kernel separates the arguments of a command line with NUL bytes, and ends the last one with one.
+        tr "\n" "\0" < "/f/pythonpid/'"${name}"'.cmdline" > /p/4242/cmdline
+        for module in homeassistant supervisor; do
+            [[ "$(wazuh-ha-host python-pid "${module}")" == 4242 ]] && echo "${module}"
+        done
+        exit 0' 2>&1 | paste -sd" " -)"
+    if [[ "${out}" == "${expect}" ]]; then
+        pass "${name}: ${expect:-neither of the two Home Assistant programs}"
+    else
+        fail "${name}: expected '${expect}', got '${out}'"
+    fi
+    return 0
+}
+
+# Among the many processes of a device, the right one is found and the others (one that has just exited, a kernel
+# thread, another Python program, a different module) are not in the way.
+check_python_pid_among_others() {
+    local out
+    out="$(docker run --rm --entrypoint bash -e WAZUH_HA_PROC=/p "${IMAGE}" -c '
+        mkdir -p /p/1 /p/20 /p/300 /p/4000 /p/50000 /p/60000
+        : > /p/1/cmdline                                               # a kernel thread has no command line
+        # /p/20 has no cmdline at all: the process has just exited
+        printf "python3\0-m\0pip\0list\0" > /p/300/cmdline
+        printf "python3\0-P\0-m\0supervisor\0" > /p/4000/cmdline
+        printf "python3\0-P\0-m\0homeassistant\0--config\0/config\0" > /p/50000/cmdline
+        printf "python3\0-m\0homeassistant\0" > /p/60000/cmdline          # a second one: the first found is used
+        echo "core=$(wazuh-ha-host python-pid homeassistant) supervisor=$(wazuh-ha-host python-pid supervisor)"
+        wazuh-ha-host python-pid nothing-of-the-kind && echo "something else was found"
+        exit 0' 2>&1)"
+    if [[ "${out}" == "core=50000 supervisor=4000" ]]; then
+        pass "among other processes: Core is process 50000 and the Supervisor 4000"
+    else
+        fail "among other processes: expected 'core=50000 supervisor=4000', got '${out}'"
+    fi
+    return 0
+}
+
 # check_facts NAME OPTIONS-FILE JQ-TEST... [-- docker run options...]
 # Runs `wazuh-ha-host facts` in the image and checks the answer against each jq test.
 check_facts() {
@@ -112,6 +159,12 @@ printf '\n\033[1mwhat the CPU is called\033[0m\n'
 for cpu_file in "${FIXTURES}"/cpuname/*.cpuinfo; do
     check_cpuname "$(basename "${cpu_file}" .cpuinfo)"
 done
+
+printf '\n\033[1mwhich process is Home Assistant Core or the Supervisor\033[0m\n'
+for python_file in "${FIXTURES}"/pythonpid/*.cmdline; do
+    check_python_pid "$(basename "${python_file}" .cmdline)"
+done
+check_python_pid_among_others
 
 printf '\n\033[1mwhether the host can be reached\033[0m\n'
 # The default privileges of a container: no SYS_ADMIN, no SYS_PTRACE.

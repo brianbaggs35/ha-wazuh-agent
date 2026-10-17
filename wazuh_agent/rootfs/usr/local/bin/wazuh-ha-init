@@ -211,6 +211,16 @@ main() {
     install -o root -g wazuh -m 0640 "${RUNTIME}/rendered/local_internal_options.conf" \
         "${LIVE}/etc/local_internal_options.conf"
 
+    # The app's own configuration assessment policy: written when the configuration lists it, and removed when
+    # it does not, so that a policy that was switched off does not stay behind. It is not in ruleset/sca, which
+    # the agent reads whole, so only a configuration that names it can make the agent run it.
+    if [[ -f "${RUNTIME}/rendered/home_assistant_os.yml" ]]; then
+        install -d -o root -g wazuh -m 0750 "${LIVE}/ruleset/ha"
+        install -o root -g wazuh -m 0640 "${RUNTIME}/rendered/home_assistant_os.yml" "${LIVE}/ruleset/ha/home_assistant_os.yml"
+    else
+        rm -rf "${LIVE}/ruleset/ha"
+    fi
+
     # What the status page reads: a world-readable directory of small, non-secret files. The page
     # runs as an unprivileged user and never touches the agent's own files.
     install -d -m 0755 "${PUBLIC}"

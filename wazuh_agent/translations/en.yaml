@@ -336,11 +336,18 @@ configuration:
     name: Check network interfaces
     description: Look for interfaces in promiscuous mode.
   sca_enabled:
-    name: Security configuration assessment
+    name: Security configuration assessment - your own policies
     description: >-
-      Run CIS-style policies. Wazuh's built-in policies are written for Debian, Ubuntu and similar systems,
-      not for Home Assistant OS, so it is off by default. Enable it with your own policies below; when
-      monitoring the host their checks run against the host.
+      Run the policy files listed under "SCA - policy files". Wazuh's built-in policies are written for
+      Debian, Ubuntu and similar systems, not for Home Assistant OS, so this is off by default; when
+      monitoring the host your policies' checks run against the host. The app's own policy for the device
+      has its own switch, below.
+  sca_host_policy:
+    name: SCA - Home Assistant OS checks
+    description: >-
+      Assess the device against the app's own policy: debug SSH access, accounts, the Docker socket, free
+      space on the data partition and the kernel protections Home Assistant OS turns on. The results are under
+      Configuration Assessment in the Wazuh dashboard. On by default; only when monitoring the host.
   sca_scan_on_start:
     name: SCA - scan on start
     description: Run a scan when the agent starts.
@@ -399,11 +406,11 @@ configuration:
       Processes of this app's container. Used only when not monitoring the host; for the host,
       Inventory - host details decides.
   inventory_core_packages:
-    name: Inventory - Home Assistant Core's Python packages
+    name: Inventory - Python packages of Home Assistant Core and the Supervisor
     description: >-
-      Include the Python packages Home Assistant Core runs on in the inventory. Home Assistant OS itself
-      has no package manager for Wazuh's vulnerability detection to match, but Core's dependencies are
-      Python packages it has advisories for. Only when monitoring the host.
+      Include the Python packages Home Assistant Core and the Supervisor run on in the inventory. Home
+      Assistant OS itself has no package manager for Wazuh's vulnerability detection to match, but their
+      dependencies are Python packages it has advisories for. Only when monitoring the host.
   inventory_host_details:
     name: Inventory - host details
     description: >-

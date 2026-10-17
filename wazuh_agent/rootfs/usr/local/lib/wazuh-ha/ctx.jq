@@ -26,6 +26,11 @@ $o[0] as $o
   # installed on the device. Anything else: inside this app's container.
   def host_mode: ($i.host.mode // "container") == "host";
 
+  # Whether the app's own configuration assessment policy for the device is wanted: on the device, unless the option
+  # says no. It does not depend on sca_enabled, which a user may have saved as false before the app had a policy
+  # of its own (the Supervisor keeps what was saved), and which stays the switch of the user's own policies.
+  def host_policy: host_mode and opt("sca_host_policy"; true);
+
   # A path as the agent will see it. The folders Home Assistant maps into the app (/homeassistant,
   # /config, /ssl, /share, ...) are at other places on the host, so the paths in the options, which
   # are written the way the app sees them, are turned into the host's. The deepest folder that
@@ -211,11 +216,15 @@ $o[0] as $o
     },
 
     sca: {
-      enabled:       (opt("sca_enabled"; false) | yn),
+      # The app's own policy (home_assistant_os.yml) is written by wazuh-ha-render, which asks host_policy, and put next
+      # to the agent's files by wazuh-ha-init. It alone starts the assessment; the user's policies run only with sca_enabled.
+      host_policy:   host_policy,
+      enabled:       ((opt("sca_enabled"; false) or host_policy) | yn),
       scan_on_start: (opt("sca_scan_on_start"; true) | yn),
       interval:      opt("sca_interval"; "12h"),
       skip_nfs:      (opt("sca_skip_nfs"; true) | yn),
-      policies:      (opt("sca_policies"; []) | nonblank | map(tr_path))
+      policies:      ((if host_policy then ["ruleset/ha/home_assistant_os.yml"] else [] end)
+                      + (if opt("sca_enabled"; false) then (opt("sca_policies"; []) | nonblank | map(tr_path)) else [] end))
     },
 
     inventory: {
