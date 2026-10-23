@@ -22,7 +22,7 @@ RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY ui/web ./
 RUN npm run build
 
-FROM golang:1.27.2-trixie@sha256:47667934874913a449b96faa7ef4777fa285d9ec29126ee80ed61c45b7cccf0e AS ui-server
+FROM golang:1.27.3-trixie@sha256:fbb7ae40b62ff8afe31662df570d39b4f5052ac32b90dae8e60d7657a20a74f4 AS ui-server
 WORKDIR /src
 COPY ui/server ./
 # Standard library only (no third-party modules); static, stripped, reproducible.
