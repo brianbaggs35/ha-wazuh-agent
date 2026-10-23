@@ -175,6 +175,30 @@ manager_knows_agent_ip() {
     return
 }
 
+# manager_host_inventory_ready NAME ID: all the host fields asserted by scenario_host have arrived
+manager_host_inventory_ready() {
+    local name="$1" id="$2" agent agent_ip agent_os os hostname cpu
+    local host_processes manager_processes port_process accounts
+    agent="$(manager_api "/agents?q=name=${name}")"
+    agent_ip="$(jq -r '.data.affected_items[0].ip // empty' <<< "${agent}")"
+    agent_os="$(jq -r '.data.affected_items[0].os.name // empty' <<< "${agent}")"
+        os="$(manager_item "/syscollector/${id}/os" '.os.name + " " + .os.version + " (" + .os.platform + ")"')"
+    hostname="$(manager_item "/syscollector/${id}/os" '.hostname')"
+    cpu="$(manager_item "/syscollector/${id}/hardware" '.cpu.name')"
+    host_processes="$(manager_api "/syscollector/${id}/processes?search=perl&limit=1" | jq -r '.data.total_affected_items // 0')"
+    manager_processes="$(manager_api "/syscollector/${id}/processes?search=wazuh-analysisd&limit=1" | jq -r '.data.total_affected_items // 0')"
+    port_process="$(manager_api "/syscollector/${id}/ports?search=perl" | jq -r '([.data.affected_items[]? | select(.local.port == 4242) | .process] | first) // empty')"
+    accounts="$(manager_api "/syscollector/${id}/users?limit=500" | jq -r '[.data.affected_items[].user.name] | join(" ")')"
+
+    [[ -n "${agent_ip}" && "${agent_ip}" != any && "${agent_os}" == "${HOST_OS_NAME}" \
+        && "${os}" == "${HOST_OS_NAME} ${HOST_OS_VERSION} (haos)" && "${hostname}" == "${HOST_HOSTNAME}" \
+        && -n "${cpu}" && "${cpu}" != null && "${cpu}" != "-" \
+        && "${host_processes}" =~ ^[0-9]+$ && "${host_processes}" -ge 1 \
+        && "${manager_processes}" =~ ^[0-9]+$ && "${manager_processes}" -ge 1 \
+        && "${port_process}" == perl && " ${accounts} " == *" root "* && " ${accounts} " == *" wazuh "* ]]
+    return
+}
+
 # manager_item PATH JQ-FILTER -> JQ-FILTER applied to the first item of the manager API's answer
 manager_item() {
     local path="$1" filter="$2"

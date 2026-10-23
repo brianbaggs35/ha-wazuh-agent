@@ -668,7 +668,11 @@ scenario_host() {
         "$(docker exec "${c}" wazuh-ha-host path /homeassistant)" "/mnt/data/supervisor/homeassistant"
 
     # --- what the manager records about this agent
-    wait_for 120 "the manager has the agent's address" manager_knows_agent_ip "${name}"
+    if ! wait_for 180 "the manager has the host identity and inventory" manager_host_inventory_ready "${name}" "${id}"; then
+        fail "the manager received the host identity and inventory"
+        dump_agent "${c}"
+        return 0
+    fi
     check_equal "the agent's address is the host's (${host_ip})" "$(manager_agent_ip "${name}")" "${host_ip}"
     check_equal "the agent's operating system is the host's (${HOST_OS_NAME})" \
         "$(manager_item "/agents?q=name=${name}&select=os.name" '.os.name')" "${HOST_OS_NAME}"
@@ -683,9 +687,9 @@ scenario_host() {
         "$(manager_item "/syscollector/${id}/hardware" '.cpu.name')" "-"
 
     # --- the processes and ports of the whole device, not of the app's container
-    [[ "$(manager_api "/syscollector/${id}/processes?search=perl&limit=1" | jq -r '.data.total_affected_items')" -ge 1 ]] \
+    [[ "$(manager_api "/syscollector/${id}/processes?search=perl&limit=1" | jq -r '.data.total_affected_items // 0')" -ge 1 ]] \
         && pass "the host's own processes are in the inventory" || fail "the host's own processes are in the inventory"
-    [[ "$(manager_api "/syscollector/${id}/processes?search=wazuh-analysisd&limit=1" | jq -r '.data.total_affected_items')" -ge 1 ]] \
+    [[ "$(manager_api "/syscollector/${id}/processes?search=wazuh-analysisd&limit=1" | jq -r '.data.total_affected_items // 0')" -ge 1 ]] \
         && pass "so are the processes of other containers on the device (the manager's)" \
         || fail "so are the processes of other containers on the device (the manager's)"
     check_equal "the host's listening port 4242 is in the inventory, with the process that opened it" \
