@@ -11,6 +11,14 @@ as a normal app update.
 Before updating the app, check that your Wazuh manager is not older than the agent
 it will receive (see "Updating" in the documentation).
 
+## [1.0.5] = 2026=10-23
+
+Wazuh agent **4.14.9**.
+
+### Updates
+
+- Updated vite to 8.3.5
+
 ## [1.0.4] - 2026-10-17
 
 Wazuh agent **4.14.9**.
