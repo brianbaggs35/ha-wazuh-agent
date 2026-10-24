@@ -17,6 +17,7 @@ Wazuh agent **4.14.9**.
 
 ### Updates
 
+- Upgrade Debian's `libbrotli1` to the security-fixed package.
 - Updated vite to 8.3.5
 - Updated vuetify to 4.3.0
 - Updated @vitest/coverage-v8 to 5.0.5
