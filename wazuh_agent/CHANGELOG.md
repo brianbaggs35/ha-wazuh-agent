@@ -18,6 +18,12 @@ Wazuh agent **4.14.9**.
 ### Updates
 
 - Updated vite to 8.3.5
+- Updated vuetify to 4.3.0
+- Updated @vitest/coverage-v8 to 5.0.5
+- Updated vitest to 5.0.5
+- Updated eslint to 10.13.0
+- Updated typescript-eslint to 8.72.0
+- Updated home-assistant/base-debian from a7f262f to e222afd
 
 ## [1.0.4] - 2026-10-17
 
