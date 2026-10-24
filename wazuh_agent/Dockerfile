@@ -66,6 +66,7 @@ RUN set -eux; \
     useradd --system --uid 1451 --gid wazuhui --no-create-home --shell /sbin/nologin wazuhui; \
     apt-get update; \
     apt-get install -y --no-install-recommends busybox-static ca-certificates curl gnupg; \
+    apt-get install -y --no-install-recommends --only-upgrade libbrotli1; \
     # HTTPS only, even across redirects.
     curl -fsSL --proto '=https' --tlsv1.2 --retry 3 https://packages.wazuh.com/key/GPG-KEY-WAZUH -o /tmp/wazuh.key; \
     fingerprint="$(gpg --show-keys --with-colons /tmp/wazuh.key | awk -F: '/^fpr:/ {print $10; exit}')"; \
