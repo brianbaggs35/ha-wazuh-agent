@@ -31,7 +31,7 @@ RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w" -o /out/wa
 # ---------------------------------------------------------------------------------------------
 # The app image.
 # ---------------------------------------------------------------------------------------------
-FROM ghcr.io/home-assistant/base-debian:trixie@sha256:e222afd25b64e5e62ac2f155b6f73e930a91967d039e0d22384abb9ef6d47e59
+FROM ghcr.io/home-assistant/base-debian:trixie@sha256:a9fb29d0ffab1a81d6379e6252db21e0edbd1263c94d9de2cfc54a396aad8611
 
 # The agent version. Wazuh requires the MANAGER to be the same version or
 # newer than the agent, so check your manager before bumping this. The
