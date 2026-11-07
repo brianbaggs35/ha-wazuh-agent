@@ -53,12 +53,15 @@ jobs:
           persist-credentials: false
 
       - name: YAML
+        id: yaml
         run: |
           python3 -m venv "${RUNNER_TEMP}/venv"
           "${RUNNER_TEMP}/venv/bin/pip" install --quiet "yamllint==1.38.0" "pyyaml==${PYYAML_VERSION}"
           "${RUNNER_TEMP}/venv/bin/yamllint" -c .yamllint --strict .
+          echo "::notice::YAML lint passed."
 
       - name: Shell scripts
+        id: shell
         run: |
           shopt -s nullglob
           shellcheck -x \
@@ -67,31 +70,80 @@ jobs:
             wazuh_agent/rootfs/usr/local/lib/wazuh-ha/hostns-start \
             wazuh_agent/rootfs/usr/local/lib/wazuh-ha/restart-wazuh \
             scripts/*.sh scripts/ci/*.sh
+          echo "::notice::Shell script lint passed."
 
       - name: Dockerfile
+        id: dockerfile
         run: |
           docker run --rm -v "${PWD}:/w:ro" hadolint/hadolint:v2.14.0 \
             hadolint --config /w/.hadolint.yaml /w/wazuh_agent/Dockerfile
+          echo "::notice::Dockerfile lint passed."
 
       - name: Workflows
-        run: docker run --rm -v "${PWD}:/repo:ro" -w /repo rhysd/actionlint:1.7.12 -color
+        id: workflows
+        run: |
+          docker run --rm -v "${PWD}:/repo:ro" -w /repo rhysd/actionlint:1.7.12 -color
+          echo "::notice::Workflow lint passed."
 
       - name: AppArmor profile syntax
+        id: apparmor
         run: |
-          docker run --rm -v "${PWD}/wazuh_agent/apparmor.txt:/profiles/wazuh_agent:ro" \
+          docker run --rm -e DEBIAN_FRONTEND=noninteractive \
+            -v "${PWD}/wazuh_agent/apparmor.txt:/profiles/wazuh_agent:ro" \
             debian:trixie-slim bash -euc '
               apt-get update -qq > /dev/null
-              apt-get install -y -qq apparmor > /dev/null
+              apt-get install -y -qq --no-install-recommends apparmor > /dev/null
               apparmor_parser -Q -K -T /profiles/wazuh_agent'
+          echo "::notice::AppArmor profile syntax passed."
 
       - name: Config guard (options, translations, security rating)
+        id: config
         run: |
           "${RUNNER_TEMP}/venv/bin/python" -I tests/config/check_config.py
+          echo "::notice::Config guard passed."
 
       - name: Home Assistant app linter
+        id: app_linter
         uses: frenck/action-app-linter@b9cfd1bc62ba60d2c4fc96317b5f7ada5923f4a7  # v2.21.1
         with:
           path: ./wazuh_agent
+
+      - name: Report lint check results
+        if: always()
+        env:
+          YAML_RESULT: ${{ steps.yaml.outcome }}
+          SHELL_RESULT: ${{ steps.shell.outcome }}
+          DOCKERFILE_RESULT: ${{ steps.dockerfile.outcome }}
+          WORKFLOWS_RESULT: ${{ steps.workflows.outcome }}
+          APPARMOR_RESULT: ${{ steps.apparmor.outcome }}
+          CONFIG_RESULT: ${{ steps.config.outcome }}
+          APP_LINTER_RESULT: ${{ steps.app_linter.outcome }}
+        run: |
+          failed=0
+          echo "## Lint and static check results" | tee -a "${GITHUB_STEP_SUMMARY}"
+          echo "" | tee -a "${GITHUB_STEP_SUMMARY}"
+          for check in \
+            "YAML:${YAML_RESULT}" \
+            "Shell scripts:${SHELL_RESULT}" \
+            "Dockerfile:${DOCKERFILE_RESULT}" \
+            "Workflows:${WORKFLOWS_RESULT}" \
+            "AppArmor profile syntax:${APPARMOR_RESULT}" \
+            "Config guard:${CONFIG_RESULT}" \
+            "Home Assistant app linter:${APP_LINTER_RESULT}"; do
+            name="${check%%:*}"
+            result="${check#*:}"
+            echo "- **${name}:** ${result}" | tee -a "${GITHUB_STEP_SUMMARY}"
+            if [[ "${result}" != success ]]; then
+              failed=1
+            fi
+          done
+
+          if [[ "${failed}" == 0 ]]; then
+            echo "::notice::All lint and static checks passed."
+          else
+            echo "::error::One or more lint checks failed or were skipped. See the corresponding step output above for the failure reason."
+            exit 1
+          fi
 
   unit-tests:
     name: Unit tests, 100% coverage
@@ -452,11 +504,33 @@ jobs:
     steps:
       - name: Check results
         env:
-          RESULTS: ${{ toJSON(needs.*.result) }}
+          LINT_RESULT: ${{ needs.lint.result }}
+          UNIT_TESTS_RESULT: ${{ needs.unit-tests.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          RENDER_TESTS_RESULT: ${{ needs.render-tests.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
+          E2E_ARM64_RESULT: ${{ needs.e2e-arm64.result }}
+          TRIVY_RESULT: ${{ needs.trivy.result }}
+          SONARQUBE_RESULT: ${{ needs.sonarqube.result }}
         run: |
-          echo "${RESULTS}"
+          {
+            echo "## CI job results"
+            echo ""
+            echo "| Job | Result |"
+            echo "| --- | --- |"
+            echo "| Lint and static checks | ${LINT_RESULT} |"
+            echo "| Unit tests, 100% coverage | ${UNIT_TESTS_RESULT} |"
+            echo "| Build image (amd64) | ${BUILD_RESULT} |"
+            echo "| Render tests | ${RENDER_TESTS_RESULT} |"
+            echo "| E2E amd64 | ${E2E_RESULT} |"
+            echo "| E2E arm64 | ${E2E_ARM64_RESULT} |"
+            echo "| Trivy scans | ${TRIVY_RESULT} |"
+            echo "| SonarQube Cloud scan | ${SONARQUBE_RESULT} |"
+          } | tee -a "${GITHUB_STEP_SUMMARY}"
+
           # "skipped" is not a failure: the Sonar scan is skipped for pull requests from forks.
-          if echo "${RESULTS}" | grep -Eq 'failure|cancelled'; then
-            echo "::error::One or more jobs did not succeed."
+          if [[ "${LINT_RESULT} ${UNIT_TESTS_RESULT} ${BUILD_RESULT} ${RENDER_TESTS_RESULT} ${E2E_RESULT} ${E2E_ARM64_RESULT} ${TRIVY_RESULT} ${SONARQUBE_RESULT}" =~ (failure|cancelled) ]]; then
+            echo "::error::One or more CI jobs failed or were cancelled. See the named job's failed step for the failure details."
             exit 1
           fi
+          echo "::notice::All applicable CI jobs passed."
