@@ -368,7 +368,10 @@ jobs:
 
       - name: Labels match the release
         run: |
-          label() { docker image inspect "${REPO}:${VERSION}" --format "{{ index .Config.Labels \"$1\" }}"; }
+          label() {
+            local label_name="$1"
+            docker image inspect "${REPO}:${VERSION}" --format "{{ index .Config.Labels \"${label_name}\" }}"
+          }
           [[ "$(label io.hass.type)" == "app" ]] || { echo "::error::io.hass.type is not 'app'"; exit 1; }
           [[ "$(label io.hass.version)" == "${VERSION}" ]] || { echo "::error::io.hass.version is '$(label io.hass.version)', expected ${VERSION}"; exit 1; }
           [[ "$(label com.wazuh.agent.version)" == "${WAZUH_VERSION}" ]] || { echo "::error::agent version label mismatch"; exit 1; }
@@ -387,3 +390,59 @@ jobs:
 
       - name: End-to-end tests of the published tag
         run: IMAGE="${REPO}:${VERSION}" tests/e2e/run.sh enroll journal fim password
+
+  release-result:
+    name: Release workflow result
+    if: always()
+    needs: [verify, build, manifest, verify-published]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report job results
+        env:
+          VERIFY_RESULT: ${{ needs.verify.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          MANIFEST_RESULT: ${{ needs.manifest.result }}
+          VERIFY_PUBLISHED_RESULT: ${{ needs.verify-published.result }}
+          PUBLISH_REQUESTED: ${{ github.event_name == 'release' || inputs.publish }}
+        run: |
+          {
+            echo "## Release workflow results"
+            echo ""
+            echo "| Job | Result |"
+            echo "| --- | --- |"
+            echo "| Verify the release | ${VERIFY_RESULT} |"
+            echo "| Build, test and scan | ${BUILD_RESULT} |"
+            echo "| Publish the multi-arch image | ${MANIFEST_RESULT} |"
+            echo "| Verify what users pull | ${VERIFY_PUBLISHED_RESULT} |"
+          } | tee -a "${GITHUB_STEP_SUMMARY}"
+
+          failed=0
+          if [[ "${VERIFY_RESULT}" != success ]]; then
+            echo "::error::Release verification did not succeed (${VERIFY_RESULT}). See the Verify the release job for details."
+            failed=1
+          fi
+          if [[ "${BUILD_RESULT}" != success ]]; then
+            echo "::error::One or more architecture build, test, or scan jobs did not succeed (${BUILD_RESULT}). See the Build, test and scan jobs for details."
+            failed=1
+          fi
+
+          if [[ "${PUBLISH_REQUESTED}" == true ]]; then
+            if [[ "${MANIFEST_RESULT}" != success ]]; then
+              echo "::error::Publishing did not succeed (${MANIFEST_RESULT}). See the Publish the multi-arch image job for details."
+              failed=1
+            fi
+            if [[ "${VERIFY_PUBLISHED_RESULT}" != success ]]; then
+              echo "::error::Published image verification did not succeed (${VERIFY_PUBLISHED_RESULT}). See the Verify what users pull jobs for details."
+              failed=1
+            fi
+          elif [[ "${MANIFEST_RESULT}" != skipped || "${VERIFY_PUBLISHED_RESULT}" != skipped ]]; then
+            echo "::error::A rehearsal should skip publication and published-image verification; got ${MANIFEST_RESULT} and ${VERIFY_PUBLISHED_RESULT}."
+            failed=1
+          else
+            echo "::notice::This was a rehearsal; publication and published-image verification were correctly skipped."
+          fi
+
+          if [[ "${failed}" != 0 ]]; then
+            exit 1
+          fi
+          echo "::notice::All required release jobs succeeded."
