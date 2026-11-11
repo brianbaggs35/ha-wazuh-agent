@@ -11,7 +11,7 @@ as a normal app update.
 Before updating the app, check that your Wazuh manager is not older than the agent
 it will receive (see "Updating" in the documentation).
 
-## [1.0.6] - unreleased
+## [1.0.6] = 2026-11-11
 
 Wazuh agent **4.14.10**.
 
@@ -23,8 +23,9 @@ Wazuh agent **4.14.10**.
 ### Updates
 
 - Upgrade Debian's `zlib1g` to the security-fixed package.
+- Updated a number of frontend dependencies.
 
-## [1.0.5] = 2026=10-23
+## [1.0.5] = 2026-10-23
 
 Wazuh agent **4.14.9**.
 
