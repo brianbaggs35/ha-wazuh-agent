@@ -11,7 +11,7 @@
 #   sudo is available (GitHub's runners); anywhere else it says so and is skipped.
 #   The first group runs the agent in a plain container (monitor_host off). The host group runs it as
 #   it runs in Home Assistant, against a stand-in for the Home Assistant OS device (see lib/host.sh).
-# Environment: IMAGE (image under test), MANAGER_VERSION (default 4.14.9),
+# Environment: IMAGE (image under test), MANAGER_VERSION (default 4.14.10),
 #              E2E_KEEP=1 to leave containers behind for debugging.
 set -uo pipefail
 

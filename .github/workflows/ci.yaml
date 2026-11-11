@@ -263,7 +263,7 @@ jobs:
       matrix:
         # The current manager, and the previous patch release: the agent may be newer than its
         # manager by a patch, which is the common state while a manager upgrade lags behind.
-        manager: ["4.14.9", "4.14.8"]
+        manager: ["4.14.10", "4.14.9"]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1

@@ -54,7 +54,7 @@ IMAGE=ha-wazuh-agent:test tests/e2e/run.sh host       # the agent against a stan
 IMAGE=ha-wazuh-agent:test tests/e2e/run.sh host_apparmor  # the same under the app's AppArmor profile; needs sudo and an AppArmor kernel, skips itself otherwise
 ```
 
-`MANAGER_VERSION=4.14.8` runs the end-to-end tests against a different manager version.
+`MANAGER_VERSION=4.14.9` runs the end-to-end tests against a different manager version.
 `E2E_KEEP=1` leaves the containers behind for debugging.
 
 ## What the app assumes about Home Assistant
