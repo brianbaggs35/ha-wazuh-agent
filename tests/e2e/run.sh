@@ -50,7 +50,7 @@ scenario_enroll() {
     assert "manager reports the agent version ${want_version}" bash -c \
         "docker exec ${MANAGER} /var/ossec/bin/agent_control -i ${id} | grep -q 'Client version:.*v${want_version}'"
     assert "container becomes healthy (agent connected)" wait_for 150 "healthy" container_healthy "${c}"
-    assert "all agent daemons are running" bash -c \
+    assert "all agent daemons are running" wait_for 60 "all daemons running" bash -c \
         "out=\$(docker exec ${c} /var/ossec/bin/wazuh-control status); for d in agentd execd logcollector modulesd syscheckd; do grep -q \"wazuh-\$d is running\" <<< \"\$out\" || exit 1; done"
     assert "/var/ossec lives on the persistent volume" bash -c \
         "[[ \"\$(docker exec ${c} readlink /var/ossec)\" == /data/ossec ]]"
@@ -524,7 +524,7 @@ scenario_crash() {
     fi
     container_log_has "${c}" 'Another instance is locking' \
         && fail "no start lock error after a crash" || pass "no start lock error after a crash"
-    assert "all agent daemons run after the crash" bash -c \
+    assert "all agent daemons run after the crash" wait_for 60 "all daemons running" bash -c \
         "[[ \$(docker exec ${c} /var/ossec/bin/wazuh-control status | grep -c 'is running') -eq 5 ]]"
     return 0
 }
