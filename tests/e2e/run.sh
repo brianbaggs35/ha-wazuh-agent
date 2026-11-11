@@ -600,7 +600,9 @@ scenario_capabilities() {
             continue
         fi
         assert "is connected with ${label}" wait_for 150 "connected" docker exec "${container}" wazuh-ha-healthcheck
-        assert "runs all five daemons with ${label}" bash -c \
+        # Poll: the health check passes once agentd is connected, which can be a moment before the
+        # last daemon (modulesd, syscheckd) is up. A daemon that never starts still fails after the wait.
+        assert "runs all five daemons with ${label}" wait_for 60 "five daemons running" bash -c \
             "[[ \$(docker exec ${container} /var/ossec/bin/wazuh-control status | grep -c 'is running') -eq 5 ]]"
         assert "the status page reports running with ${label}" wait_for 90 "running" ui_state_is "${container}" running
         container_log_has "${container}" 'Operation not permitted' \
