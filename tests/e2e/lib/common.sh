@@ -11,7 +11,7 @@
 
 E2E_ID="${E2E_ID:-$$}"
 E2E_NET="e2e-net-${E2E_ID}"
-MANAGER_VERSION="${MANAGER_VERSION:-4.14.9}"
+MANAGER_VERSION="${MANAGER_VERSION:-4.14.10}"
 MANAGER="e2e-manager-${E2E_ID}"
 IMAGE="${IMAGE:-ha-wazuh-agent:test}"
 

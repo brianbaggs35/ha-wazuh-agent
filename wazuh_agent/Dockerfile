@@ -37,7 +37,7 @@ FROM ghcr.io/home-assistant/base-debian:trixie@sha256:a9fb29d0ffab1a81d6379e6252
 # newer than the agent, so check your manager before bumping this. The
 # scheduled "Wazuh version watch" workflow opens a PR when a newer stable
 # agent is published; the version is only ever set here.
-ARG WAZUH_VERSION=4.14.9
+ARG WAZUH_VERSION=4.14.10
 ARG WAZUH_PKG_REVISION=1
 
 # Fingerprint of the Wazuh package signing key (primary key of

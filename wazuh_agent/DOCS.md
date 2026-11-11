@@ -18,7 +18,7 @@ inventory and file integrity events appear in the Wazuh dashboard under **Agents
 > into the test machine's kernel. Home Assistant itself (the Supervisor, its handling of Protection
 > mode, how it installs the profile, ingress) is not part of the automated tests.
 
-Bundled agent: **Wazuh 4.14.9** (see the changelog for the version in each release).
+Bundled agent: **Wazuh 4.14.10** (see the changelog for the version in each release).
 
 ## Before you start
 
