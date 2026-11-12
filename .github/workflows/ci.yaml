@@ -104,7 +104,7 @@ jobs:
 
       - name: Home Assistant app linter
         id: app_linter
-        uses: frenck/action-app-linter@b9cfd1bc62ba60d2c4fc96317b5f7ada5923f4a7  # v2.21.1
+        uses: frenck/action-app-linter@d51677290aef26cdfc835271dd3c7343ce502809  # v2.21.2
         with:
           path: ./wazuh_agent
 
