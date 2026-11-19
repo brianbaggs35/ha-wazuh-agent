@@ -14,7 +14,7 @@
 # binary and the built web files: no Node, no Go toolchain, no packages to patch at runtime.
 # Both builder images are pinned by digest; Dependabot keeps them current.
 # ---------------------------------------------------------------------------------------------
-FROM node:25-trixie-slim@sha256:aabbe39553d15ede8a97cc60c9e1a97034ff772afcf696ea42b94e7f5f2ec71b AS ui-web
+FROM node:26-trixie-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS ui-web
 WORKDIR /web
 COPY ui/web/package.json ui/web/package-lock.json ./
 # --ignore-scripts: no dependency may run code during installation.
