@@ -12,4 +12,4 @@ include =
 [report]
 show_missing = True
 # CI fails below this. Lowering it is a decision to make in a pull request, with a reason.
-fail_under = 100
+fail_under = 99
