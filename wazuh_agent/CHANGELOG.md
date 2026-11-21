@@ -27,6 +27,7 @@ Wazuh agent **4.14.10**.
 - Updated eslint to 10.15.0
 - Updated eslint-plugin-vue to 10.12.1
 - Updated jsdom to 31.0.1
+- Updated prettier to 3.10.1
 
 ## [1.0.6] = 2026-11-11
 
