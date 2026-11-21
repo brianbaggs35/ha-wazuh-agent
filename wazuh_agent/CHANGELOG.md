@@ -11,6 +11,14 @@ as a normal app update.
 Before updating the app, check that your Wazuh manager is not older than the agent
 it will receive (see "Updating" in the documentation).
 
+## [1.0.8] = 2026-11-21
+
+Wazuh agent **4.14.10**.
+
+### Fixed
+
+- Keep Wazuh syscheckd from removing the host's audit plugin configuration when the host filesystem is read-only.
+
 ## [1.0.7] = 2026-11-20
 
 Wazuh agent **4.14.10**.
