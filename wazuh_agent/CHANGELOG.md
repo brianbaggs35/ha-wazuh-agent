@@ -22,6 +22,7 @@ Wazuh agent **4.14.10**.
 - Updated vuetify to 4.3.4
 - Updated @vitest/coverage-v8 to 5.1.1
 - Updated vitest to 5.1.1
+- Updated @vue/test-utils to 2.6.0
 
 ## [1.0.6] = 2026-11-11
 
