@@ -27,6 +27,9 @@ source "${HERE}/lib/host.sh"
 
 JOURNAL_MID="a1b2c3d4e5f60718293a4b5c6d7e8f90"
 FAST='"enrollment_delay": 1'   # do not wait the default 20s after enrolling
+readonly AGENT_ACTIVE_MESSAGE="agent active"
+readonly AGENT_ENROLLED_MESSAGE="the agent enrolled and is Active at the manager"
+readonly STAND_IN_HOST_MESSAGE="the stand-in host started"
 
 # ---------------------------------------------------------------------------
 scenario_enroll() {
@@ -86,7 +89,7 @@ scenario_journal() {
     write_options "${vol}" "{\"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", ${FAST}}"
     agent_start "${c}" "${vol}" -v "${jvol}:/var/log/journal:ro"
 
-    wait_for 150 "agent active" manager_agent_active "${name}" || { fail "agent active"; dump_agent "${c}"; return; }
+    wait_for 150 "${AGENT_ACTIVE_MESSAGE}" manager_agent_active "${name}" || { fail "${AGENT_ACTIVE_MESSAGE}"; dump_agent "${c}"; return; }
     agent_settle "${c}"
     if wait_for 90 "journal monitoring" container_log_has "${c}" "Monitoring journal entries"; then
         pass "logcollector is monitoring the journal"
@@ -140,7 +143,7 @@ scenario_fim() {
     write_options "${vol}" "{\"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", ${FAST}}"
     agent_start "${c}" "${vol}" -v "${cfg}:/homeassistant:ro"
 
-    wait_for 150 "agent active" manager_agent_active "${name}" || { fail "agent active"; dump_agent "${c}"; return; }
+    wait_for 150 "${AGENT_ACTIVE_MESSAGE}" manager_agent_active "${name}" || { fail "${AGENT_ACTIVE_MESSAGE}"; dump_agent "${c}"; return; }
     agent_settle "${c}"
     wait_for 90 "realtime FIM" container_log_has "${c}" "Real-time file integrity monitoring started" \
         && pass "real-time file integrity monitoring started" || { fail "real-time file integrity monitoring started"; dump_agent "${c}"; return; }
@@ -200,7 +203,7 @@ EOF'
     docker run --rm -v "${logvol}:/l" --entrypoint bash "${IMAGE}" -c 'touch /l/e2e-labels.log'
     agent_start "${c}" "${vol}" -v "${extra}:/config:ro" -v "${logvol}:/logs"
 
-    wait_for 150 "agent active" manager_agent_active "${name}" || { fail "agent active"; dump_agent "${c}"; return; }
+    wait_for 150 "${AGENT_ACTIVE_MESSAGE}" manager_agent_active "${name}" || { fail "${AGENT_ACTIVE_MESSAGE}"; dump_agent "${c}"; return; }
     agent_settle "${c}"
     local id group_members
     id="$(manager_agent_id "${name}")"
@@ -260,7 +263,7 @@ scenario_upgrade() {
     local vol="e2e-upgrade-data-${E2E_ID}" c="e2e-upgrade-${E2E_ID}" name="e2e-upgrade"
     write_options "${vol}" "{\"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", ${FAST}}"
     agent_start "${c}" "${vol}"
-    wait_for 150 "agent active" manager_agent_active "${name}" || { fail "agent active"; dump_agent "${c}"; return; }
+    wait_for 150 "${AGENT_ACTIVE_MESSAGE}" manager_agent_active "${name}" || { fail "${AGENT_ACTIVE_MESSAGE}"; dump_agent "${c}"; return; }
     local id keys_before
     id="$(manager_agent_id "${name}")"
     docker stop "${c}" > /dev/null
@@ -353,7 +356,7 @@ scenario_ui() {
     # open it for this container only. The closed one below keeps the default.
     agent_start "${c}" "${vol}" -e WAZUH_UI_ALLOW=0.0.0.0/0
 
-    wait_for 150 "agent active" manager_agent_active "${name}" || { fail "agent active"; dump_agent "${c}"; return 0; }
+    wait_for 150 "${AGENT_ACTIVE_MESSAGE}" manager_agent_active "${name}" || { fail "${AGENT_ACTIVE_MESSAGE}"; dump_agent "${c}"; return 0; }
     # The agent restarts once after its first connection (Wazuh asks); the test stops it later, and must not do
     # that while the app is restarting it for that.
     agent_settle "${c}"
@@ -472,7 +475,7 @@ scenario_reenroll() {
     local vol="e2e-reenroll-data-${E2E_ID}" c="e2e-reenroll-${E2E_ID}" name="e2e-reenroll"
     write_options "${vol}" "{\"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", ${FAST}}"
     agent_start "${c}" "${vol}"
-    wait_for 150 "agent active" manager_agent_active "${name}" || { fail "agent active"; dump_agent "${c}"; return; }
+    wait_for 150 "${AGENT_ACTIVE_MESSAGE}" manager_agent_active "${name}" || { fail "${AGENT_ACTIVE_MESSAGE}"; dump_agent "${c}"; return; }
     local id
     id="$(manager_agent_id "${name}")"
     docker stop "${c}" > /dev/null
@@ -504,7 +507,7 @@ scenario_crash() {
     local vol="e2e-crash-data-${E2E_ID}" c="e2e-crash-${E2E_ID}" name="e2e-crash"
     write_options "${vol}" "{\"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", ${FAST}}"
     agent_start "${c}" "${vol}"
-    wait_for 150 "agent active" manager_agent_active "${name}" || { fail "agent active"; dump_agent "${c}"; return 0; }
+    wait_for 150 "${AGENT_ACTIVE_MESSAGE}" manager_agent_active "${name}" || { fail "${AGENT_ACTIVE_MESSAGE}"; dump_agent "${c}"; return 0; }
 
     # No clean shutdown, like a power cut or a Supervisor timeout. Then plant what an interrupted
     # start leaves in the data: the lock wazuh-control takes, naming a process ID that is certainly
@@ -640,14 +643,14 @@ scenario_host() {
     write_options "${vol}" "{\"monitor_host\": true, \"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", ${FAST}}"
     host_start "${h}" "${vol}" -e "HOST_MACHINE_ID=${JOURNAL_MID}" \
         -v "${cfg}:/mnt/data/supervisor/homeassistant" -v "${ssl}:/mnt/data/supervisor/ssl" -v "${jvol}:/var/log/journal:ro" \
-        || { fail "the stand-in host started"; return 0; }
+        || { fail "${STAND_IN_HOST_MESSAGE}"; return 0; }
     # The folders Home Assistant maps into the app are the same folders as the host's.
     host_agent_start "${c}" "${vol}" "${h}" -v "${cfg}:/homeassistant:ro" -v "${ssl}:/ssl:ro" -v "${jvol}:/var/log/journal:ro"
 
-    if wait_for 180 "agent active" manager_agent_active "${name}"; then
-        pass "the agent enrolled and is Active at the manager"
+    if wait_for 180 "${AGENT_ACTIVE_MESSAGE}" manager_agent_active "${name}"; then
+        pass "${AGENT_ENROLLED_MESSAGE}"
     else
-        fail "the agent enrolled and is Active at the manager"
+        fail "${AGENT_ENROLLED_MESSAGE}"
         dump_agent "${c}"
         return 0
     fi
@@ -767,12 +770,12 @@ scenario_host_cpu() {
     local vol="e2e-hcpu-data-${E2E_ID}" h="e2e-hcpu-${E2E_ID}" c="e2e-hcpu-agent-${E2E_ID}" name="e2e-hcpu-agent"
     local sample="${HERE}/../fixtures/host/cpuname/rpi5.cpuinfo"
     write_options "${vol}" "{\"monitor_host\": true, \"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", ${FAST}}"
-    host_start "${h}" "${vol}" || { fail "the stand-in host started"; return 0; }
+    host_start "${h}" "${vol}" || { fail "${STAND_IN_HOST_MESSAGE}"; return 0; }
     # A Raspberry Pi 5's /proc/cpuinfo, which has no "model name", whatever machine the test runs on.
     host_agent_start "${c}" "${vol}" "${h}" -v "${sample}:/cpuinfo-sample:ro" \
         -e WAZUH_HA_CPUINFO=/cpuinfo-sample -e WAZUH_HA_BOARD_FILE=/nonexistent
-    if ! wait_for 180 "agent active" manager_agent_active "${name}"; then
-        fail "the agent enrolled and is Active at the manager"
+    if ! wait_for 180 "${AGENT_ACTIVE_MESSAGE}" manager_agent_active "${name}"; then
+        fail "${AGENT_ENROLLED_MESSAGE}"
         dump_agent "${c}"
         return 0
     fi
@@ -792,8 +795,8 @@ scenario_host_control() {
     local vol="e2e-hctl-data-${E2E_ID}" c="e2e-hctl-${E2E_ID}" name="e2e-hctl"
     write_options "${vol}" "{\"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", ${FAST}}"
     agent_start "${c}" "${vol}"
-    if ! wait_for 150 "agent active" manager_agent_active "${name}"; then
-        fail "the agent enrolled and is Active at the manager"
+    if ! wait_for 150 "${AGENT_ACTIVE_MESSAGE}" manager_agent_active "${name}"; then
+        fail "${AGENT_ENROLLED_MESSAGE}"
         dump_agent "${c}"
         return 0
     fi
@@ -875,15 +878,15 @@ scenario_host_packages() {
     local c="e2e-hpkg-agent-${E2E_ID}" name="e2e-hpkg-agent"
     # A short inventory interval, so a change in the packages shows within the test.
     write_options "${vol}" "{\"monitor_host\": true, \"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", \"inventory_interval\": \"20s\", ${FAST}}"
-    host_start "${h}" "${vol}" || { fail "the stand-in host started"; return 0; }
+    host_start "${h}" "${vol}" || { fail "${STAND_IN_HOST_MESSAGE}"; return 0; }
     # Core as Home Assistant's container starts it (rootfs/etc/services.d/home-assistant/run of Core 2026.9 and
     # later: python3 -P -m homeassistant --config /config; before, without -P), in a container of its own with the
     # Python packages where the official image keeps them. It holds a package with a known advisory, so that it is
     # one worth finding. The agent starts with Core running and the Supervisor not yet there, as at a boot.
     python_program_start "${core}" "-P -m homeassistant --config /config" aiohttp:3.9.0 requests:2.19.0
     host_agent_start "${c}" "${vol}" "${h}"
-    if ! wait_for 180 "agent active" manager_agent_active "${name}"; then
-        fail "the agent enrolled and is Active at the manager"
+    if ! wait_for 180 "${AGENT_ACTIVE_MESSAGE}" manager_agent_active "${name}"; then
+        fail "${AGENT_ENROLLED_MESSAGE}"
         dump_agent "${c}"
         return 0
     fi
@@ -974,10 +977,10 @@ scenario_host_sca() {
     # Nothing here sets sca_enabled or sca_host_policy: what a user who changed nothing gets. A short interval, so that
     # a change on the device is assessed again within the test.
     write_options "${vol}" "{\"monitor_host\": true, \"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", \"sca_interval\": \"1m\", ${FAST}}"
-    host_start "${h}" "${vol}" || { fail "the stand-in host started"; return 0; }
+    host_start "${h}" "${vol}" || { fail "${STAND_IN_HOST_MESSAGE}"; return 0; }
     host_agent_start "${c}" "${vol}" "${h}"
-    if ! wait_for 180 "agent active" manager_agent_active "${name}"; then
-        fail "the agent enrolled and is Active at the manager"
+    if ! wait_for 180 "${AGENT_ACTIVE_MESSAGE}" manager_agent_active "${name}"; then
+        fail "${AGENT_ENROLLED_MESSAGE}"
         dump_agent "${c}"
         return 0
     fi
@@ -1064,7 +1067,7 @@ scenario_host_incompatible() {
     docker run -d --name "${h}" --hostname haos-musl --network "${E2E_NET}" --pid=host --cap-add SYS_ADMIN \
         --security-opt apparmor=unconfined -v "${vol}:${HOST_DATA_PATH}" alpine:3 sh -c 'mount --make-rshared /; touch /tmp/host-ready; exec sleep 100000' > /dev/null
     track_container "${h}"
-    wait_for 60 "the stand-in host is ready" docker exec "${h}" test -f /tmp/host-ready || { fail "the stand-in host started"; return 0; }
+    wait_for 60 "the stand-in host is ready" docker exec "${h}" test -f /tmp/host-ready || { fail "${STAND_IN_HOST_MESSAGE}"; return 0; }
     host_agent_start "${c}" "${vol}" "${h}"
 
     if wait_for 120 "the page reports that the agent cannot start" ui_state_is "${h}" needs_host_access; then
@@ -1117,12 +1120,12 @@ scenario_host_apparmor() {
     fi
     write_options "${vol}" "{\"monitor_host\": true, \"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", ${FAST}}"
     host_start "${h}" "${vol}" -v "${cfg}:/mnt/data/supervisor/homeassistant" -v "${ssl}:/mnt/data/supervisor/ssl" \
-        || { fail "the stand-in host started"; return 0; }
+        || { fail "${STAND_IN_HOST_MESSAGE}"; return 0; }
     local before after control
     before="$(apparmor_denials "${profile}")"
     host_agent_start "${c}" "${vol}" "${h}" --security-opt "apparmor=${profile}" -v "${cfg}:/homeassistant:ro" -v "${ssl}:/ssl:ro"
 
-    if wait_for 180 "agent active" manager_agent_active "${name}"; then
+    if wait_for 180 "${AGENT_ACTIVE_MESSAGE}" manager_agent_active "${name}"; then
         pass "the agent enrolls and is Active with the profile enforced"
     else
         fail "the agent enrolls and is Active with the profile enforced"
