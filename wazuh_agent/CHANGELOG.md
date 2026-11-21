@@ -29,6 +29,7 @@ Wazuh agent **4.14.10**.
 - Updated jsdom to 31.0.1
 - Updated prettier to 3.10.1
 - Updated typescript-eslint to 8.73.0
+- Updated vite to 8.3.8
 
 ## [1.0.6] = 2026-11-11
 
