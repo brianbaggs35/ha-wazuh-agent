@@ -2,3 +2,7 @@ node_modules/
 dist/
 coverage/
 *.tsbuildinfo
+.vs_code/
+.history/
+coverage.xml
+coverage-go/
