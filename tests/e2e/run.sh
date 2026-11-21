@@ -4,7 +4,8 @@
 #   IMAGE=ha-wazuh-agent:test tests/e2e/run.sh [scenario ...]
 #
 # Scenarios: validation enroll journal fim config supervisor ui capabilities upgrade crash duplicate reenroll
-#            host host_cpu host_control host_unavailable host_incompatible host_packages host_sca host_apparmor password
+#            host host_cpu host_control host_unavailable host_incompatible host_audit_plugin host_packages host_sca
+#            host_apparmor password
 #            (default: all, in this order. password is last: it makes the manager require a registration
 #            password, which every enrollment after it would then fail without.)
 #   host_apparmor loads the app's AppArmor profile and so only runs where AppArmor is enforced and
@@ -1096,6 +1097,33 @@ scenario_host_incompatible() {
 }
 
 # ---------------------------------------------------------------------------
+scenario_host_audit_plugin() {
+    log "host_audit_plugin: syscheckd must not remove the host's audit plugin config"
+    local vol="e2e-haudit-data-${E2E_ID}" h="e2e-haudit-${E2E_ID}" c="e2e-haudit-agent-${E2E_ID}"
+    local name="e2e-haudit-agent" contents="active = yes"
+    write_options "${vol}" "{\"monitor_host\": true, \"manager_address\": \"${MANAGER}\", \"agent_name\": \"${name}\", ${FAST}}"
+    host_start "${h}" "${vol}" || { fail "${STAND_IN_HOST_MESSAGE}"; return 0; }
+    docker exec "${h}" bash -c 'mkdir -p /etc/audit/plugins.d; printf "%s\n" "$1" > /etc/audit/plugins.d/af_wazuh.conf' _ "${contents}"
+    host_agent_start "${c}" "${vol}" "${h}"
+
+    if wait_for 180 "${AGENT_ACTIVE_MESSAGE}" manager_agent_active "${name}"; then
+        pass "the agent starts with a host audit plugin config present"
+    else
+        fail "the agent starts with a host audit plugin config present"
+        dump_agent "${c}"
+        return 0
+    fi
+    check_equal "the host's audit plugin config is preserved" \
+        "$(docker exec "${h}" cat /etc/audit/plugins.d/af_wazuh.conf)" "${contents}"
+    if container_log_has "${c}" "Unable to delete file: '/etc/audit/plugins.d/af_wazuh.conf'"; then
+        fail "syscheckd removes only the private audit plugin copy"
+    else
+        pass "syscheckd removes only the private audit plugin copy"
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # The app's AppArmor profile is enforced on Home Assistant OS, and cannot be on a development machine
 # whose kernel has AppArmor off, so this runs where it can be (GitHub's runners): the profile is loaded
 # and the agent runs against the stand-in device under it, as the Supervisor would run it.
@@ -1188,7 +1216,7 @@ scenario_host_apparmor() {
 # ---------------------------------------------------------------------------
 main() {
     local scenarios=("$@")
-    [[ ${#scenarios[@]} -gt 0 ]] || scenarios=(validation enroll journal fim config supervisor ui capabilities upgrade crash duplicate reenroll host host_cpu host_control host_unavailable host_incompatible host_packages host_sca host_apparmor password)
+    [[ ${#scenarios[@]} -gt 0 ]] || scenarios=(validation enroll journal fim config supervisor ui capabilities upgrade crash duplicate reenroll host host_cpu host_control host_unavailable host_incompatible host_audit_plugin host_packages host_sca host_apparmor password)
 
     log "image under test: ${IMAGE}   manager: wazuh-manager ${MANAGER_VERSION}"
     # Validation needs no manager; everything else does.

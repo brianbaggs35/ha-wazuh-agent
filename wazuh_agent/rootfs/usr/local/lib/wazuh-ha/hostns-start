@@ -31,6 +31,16 @@ shift 3
 "${busybox}" mount --bind "${view}/passwd" /etc/passwd
 "${busybox}" mount --bind "${view}/group" /etc/group
 
+# Wazuh syscheckd removes its audit plugin config when who-data monitoring is off. Its
+# directory must be private here: the host's mount namespace must not lose its config.
+for plugin_dir in audit audisp; do
+    host_plugins="/etc/${plugin_dir}/plugins.d"
+    private_plugins="${view}/${plugin_dir}-plugins"
+    if [ -d "${host_plugins}" ] && [ -d "${private_plugins}" ]; then
+        "${busybox}" mount --bind "${private_plugins}" "${host_plugins}"
+    fi
+done
+
 # ARM kernels do not name the CPU in /proc/cpuinfo, and Wazuh reads the name from there. When the
 # app has worked one out, show that copy instead.
 if [ -f "${view}/cpuinfo" ]; then

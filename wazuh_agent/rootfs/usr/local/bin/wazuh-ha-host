@@ -317,12 +317,23 @@ write_cpuinfo() {
 }
 
 prepare() {
-    local hostdata="$1"
+    local hostdata="$1" plugin_dir source target
     install -d -m 0755 "${DATA}/hostbin" "${DATA}/hostview" || return 1
     install -m 0755 "$(command -v busybox)" "${DATA}/hostbin/busybox" || return 1
     install -m 0755 "${LIB}/hostns-start" "${DATA}/hostbin/hostns-start" || return 1
     write_account_file passwd "wazuh:x:$(id -u wazuh):$(id -g wazuh):Wazuh agent:/var/ossec:/sbin/nologin" || return 1
     write_account_file group "wazuh:x:$(id -g wazuh):" || return 1
+    # syscheckd removes these plugin files when who-data monitoring is off. Give it
+    # private copies so that cleanup cannot modify the host's read-only system files.
+    for plugin_dir in audit audisp; do
+        source="/proc/${HOST_PID}/root/etc/${plugin_dir}/plugins.d"
+        target="${DATA}/hostview/${plugin_dir}-plugins"
+        rm -rf "${target}"
+        if [[ -d "${source}" ]]; then
+            install -d -m 0755 "${target}" || return 1
+            cp -a "${source}/." "${target}/" || return 1
+        fi
+    done
     write_cpuinfo
     # What the last run said about Home Assistant's programs was about that run: say it again in this one.
     rm -f "${DATA}/hostview/"*.state
