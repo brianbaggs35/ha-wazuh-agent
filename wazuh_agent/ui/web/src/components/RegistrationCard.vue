@@ -57,8 +57,7 @@ const name = computed(() => registration.value?.name || agent.value?.name || 'â€
 
     <p v-if="registration?.registered" class="text-body-2 mt-4 mb-0" data-test="where">
       In the Wazuh dashboard open <strong>Agents</strong> and look for
-      <span class="mono">{{ name }}</span
-      >.
+      <span class="mono">{{ name }}</span>.
     </p>
   </v-card>
 </template>
