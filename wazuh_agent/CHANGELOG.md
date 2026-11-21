@@ -25,6 +25,7 @@ Wazuh agent **4.14.10**.
 - Updated @vue/test-utils to 2.6.0
 - Updated @vitejs/plugin-vue to 6.0.11
 - Updated eslint to 10.15.0
+- Updated eslint-plugin-vue to 10.12.1
 
 ## [1.0.6] = 2026-11-11
 
