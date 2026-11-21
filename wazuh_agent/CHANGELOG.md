@@ -18,6 +18,7 @@ Wazuh agent **4.14.10**.
 ### Updates
 
 - Updated ha-wazuh-agent to version 1.0.7
+- Updated vue to 3.5.46
 
 ## [1.0.6] = 2026-11-11
 
