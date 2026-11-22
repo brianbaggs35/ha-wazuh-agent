@@ -1,0 +1,4 @@
+has: <log_format>multi-line-regex</log_format>
+has: <multiline_regex match="start" replace="wspace" timeout="10">^Traceback</multiline_regex>
+has: <multiline_regex>^\[\d{4}-</multiline_regex>
+no: <multiline_regex match="start" replace="wspace" timeout="10">^\[

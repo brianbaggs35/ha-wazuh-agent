@@ -19,6 +19,11 @@ Wazuh agent **4.14.10**.
 
 - Updated ha-wazuh-agent to version 1.0.9
 
+### Added
+
+- Read events that span several lines: the `multi-line-regex` log format of `log_files` now works, with `multiline_regex`, `multiline_match`, `multiline_replace` and `multiline_timeout`. Before, the format could be chosen but had no way to say where an event starts.
+- File integrity monitoring: `fim_diff_disk_quota` and `fim_diff_file_size` set how much disk the stored copies of changed files may take and the largest file that shows what changed. The defaults are Wazuh's own, so nothing changes unless you set them.
+
 ### Security
 
 - Upgrade the image's glibc (`libc6`, `libc-bin`) and nghttp2 (`libnghttp2-14`) libraries to the Debian security release, which closes the 27 open Trivy code scanning alerts (the glibc heap and stack overflow, DNS resolver and iconv denial-of-service findings, and the nghttp2 HTTP/1.1 upgrade request smuggling finding).

@@ -42,6 +42,8 @@ has: <ignore>/homeassistant/www</ignore>
 has: <ignore type="sregex">\.bak$</ignore>
 has: <process_priority>5</process_priority>
 has: <entries>50000</entries>
+has: <limit>2GB</limit>
+has: <limit>10MB</limit>
 has: <interval>10m</interval>
 has: <check_pids>yes</check_pids>
 has: <check_ports>yes</check_ports>

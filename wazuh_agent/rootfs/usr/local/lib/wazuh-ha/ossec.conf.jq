@@ -135,6 +135,16 @@ def t($indent; $name; $value):
   t(6; "enabled"; "yes"),
   t(6; "entries"; $c.fim.file_limit),
   "    </file_limit>",
+  "    <diff>",
+  "      <disk_quota>",
+  t(8; "enabled"; "yes"),
+  t(8; "limit"; $c.fim.diff_disk_quota),
+  "      </disk_quota>",
+  "      <file_size>",
+  t(8; "enabled"; "yes"),
+  t(8; "limit"; $c.fim.diff_file_size),
+  "      </file_size>",
+  "    </diff>",
   "    <synchronization>",
   t(6; "enabled"; $c.fim.sync_enabled),
   t(6; "interval"; $c.fim.sync_interval),
@@ -163,6 +173,14 @@ def t($indent; $name; $value):
     (if (.restrict | present) then "    <restrict type=\"PCRE2\">\(.restrict)</restrict>" else empty end),
     (if (.exclude | present) then t(4; "exclude"; .exclude) else empty end),
     (if (.age | present) then t(4; "age"; .age) else empty end),
+    (if (.multiline_regex | present) then
+       "    <multiline_regex"
+       + (if (.multiline_match | present) then " match=\"\(.multiline_match)\"" else "" end)
+       + (if (.multiline_replace | present) then " replace=\"\(.multiline_replace)\"" else "" end)
+       # The timeout is a number, never blank, so it is tested for null like the directory depth above.
+       + (if .multiline_timeout != null then " timeout=\"\(.multiline_timeout)\"" else "" end)
+       + ">\(.multiline_regex)</multiline_regex>"
+     else empty end),
     "  </localfile>"),
   "",
   "  <!-- Log analysis: commands -->",

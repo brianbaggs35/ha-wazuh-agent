@@ -266,7 +266,7 @@ Defaults are shown in the tab itself; the grouping below follows it.
 | `journal_apps`, `journal_all` | Every app's logs, or the whole journal (default off, can be very noisy). |
 | `journal_filters` | Extra filters on one journal field each (`field`, `pattern`, `ignore_if_missing`). |
 | `ha_core_log_enabled` | Also read `home-assistant.log` in the Home Assistant configuration folder (already in the journal). |
-| `log_files` | Extra log files: `path`, `format`, `only_future_events`, `ignore`, `restrict`, `exclude`, `age`. |
+| `log_files` | Extra log files: `path`, `format`, `only_future_events`, `ignore`, `restrict`, `exclude`, `age`, and for the `multi-line-regex` format `multiline_regex`, `multiline_match`, `multiline_replace`, `multiline_timeout`. |
 | `log_commands` | Command output as events: `command`, `format`, `frequency`, `alias`. The command runs on the device. |
 
 #### Example: the audit log
@@ -286,6 +286,24 @@ log_files:
 Wazuh's rules then report what they know of it: a sample AppArmor denial line is reported by rule 80730, whose
 description says *Auditd: SELinux permission check* although the line is AppArmor's.
 
+#### Example: events that span several lines
+
+Set `format: multi-line-regex` and give `multiline_regex`, the pattern of the line that starts an event, to read
+several lines as one event (a Python traceback, for example):
+
+```yaml
+log_files:
+  - path: /share/myapp/error.log
+    format: multi-line-regex
+    multiline_regex: ^Traceback
+    multiline_replace: wspace
+```
+
+`multiline_match` says where an event ends (`start`, the default: just before the next line that matches; `end`: at
+the line that matches; `all`: when the whole event matches), `multiline_replace` what the line breaks inside an event
+become (`no-replace`, `wspace`, `tab` or `none`) and `multiline_timeout` how many seconds to wait for the next line
+(1 to 120, default 5; it must not exceed `age`). These options are refused with any other format.
+
 ### File integrity monitoring
 
 | Option | Purpose |
@@ -296,6 +314,7 @@ description says *Auditd: SELinux permission check* although the line is AppArmo
 | `fim_ignore`, `fim_ignore_sregex` | Paths and patterns to leave out (defaults skip logs, databases, caches). |
 | `fim_nodiff`, `fim_nodiff_sregex` | Paths whose **content is never sent** (default: `secrets.yaml`, `.storage`, `/ssl`; with `fim_host_defaults` also the password files). |
 | `fim_max_eps`, `fim_process_priority`, `fim_file_limit` | Throttling, scanner priority, file cap. |
+| `fim_diff_disk_quota`, `fim_diff_file_size` | With `report_changes` on, the disk the stored copies of changed files may take (default `1GB`) and the largest file that shows what changed (default `50MB`), as a number and `KB`, `MB` or `GB`. |
 | `fim_sync_enabled`, `fim_sync_interval`, `fim_sync_max_eps` | Inventory synchronization with the manager. |
 
 `fim_ignore_sregex` uses Wazuh's *simple* regular expressions: `^` and `$` anchor, `|` means

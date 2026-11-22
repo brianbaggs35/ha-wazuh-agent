@@ -1,0 +1,2 @@
+has: fim_diff_disk_quota: a number followed by KB, MB or GB (for example 1GB)
+has: fim_diff_file_size: a number followed by KB, MB or GB (for example 50MB)

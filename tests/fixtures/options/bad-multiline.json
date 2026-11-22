@@ -1,0 +1,1 @@
+{"manager_address": "m", "log_files": [{"path": "/a.log", "format": "multi-line-regex"}, {"path": "/b.log", "multiline_regex": "^x"}, {"path": "/c.log", "format": "json", "multiline_timeout": 5}, {"path": "/d.log", "multiline_match": "end"}]}

@@ -153,6 +153,8 @@ options:
   fim_max_eps: 50
   fim_process_priority: 10
   fim_file_limit: 100000
+  fim_diff_disk_quota: 1GB
+  fim_diff_file_size: 50MB
   fim_sync_enabled: true
   fim_sync_interval: 5m
   fim_sync_max_eps: 10
@@ -255,6 +257,10 @@ schema:
       restrict: str?
       exclude: str?
       age: str?
+      multiline_regex: str?
+      multiline_match: list(start|end|all)?
+      multiline_replace: list(no-replace|wspace|tab|none)?
+      multiline_timeout: int(1,120)?
   log_commands:
     - command: str
       format: list(command|full_command)?
@@ -284,6 +290,8 @@ schema:
   fim_max_eps: int(0,1000000)
   fim_process_priority: int(-20,19)
   fim_file_limit: int(1,2147483647)
+  fim_diff_disk_quota: match(^[0-9]+(KB|MB|GB)$)
+  fim_diff_file_size: match(^[0-9]+(KB|MB|GB)$)
   fim_sync_enabled: bool
   fim_sync_interval: match(^[0-9]+[smhd]$)
   fim_sync_max_eps: int(0,1000000)

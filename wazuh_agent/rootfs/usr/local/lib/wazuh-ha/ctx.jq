@@ -193,6 +193,8 @@ $o[0] as $o
          | map({path: (.path | trim | tr_path), format: (.format // "syslog"),
                 ignore: (.ignore // ""), restrict: (.restrict // ""),
                 exclude: (.exclude // ""), age: (.age // ""),
+                multiline_regex: (.multiline_regex // ""), multiline_match: (.multiline_match // ""),
+                multiline_replace: (.multiline_replace // ""), multiline_timeout: .multiline_timeout,
                 only_future_events: (if .only_future_events == null then true else .only_future_events end | yn)}))
     ),
 
@@ -255,6 +257,8 @@ $o[0] as $o
       max_eps:       opt("fim_max_eps"; 50),
       process_priority: opt("fim_process_priority"; 10),
       file_limit:    opt("fim_file_limit"; 100000),
+      diff_disk_quota: opt("fim_diff_disk_quota"; "1GB"),
+      diff_file_size:  opt("fim_diff_file_size"; "50MB"),
       sync_enabled:  (opt("fim_sync_enabled"; true) | yn),
       sync_interval: opt("fim_sync_interval"; "5m"),
       sync_max_eps:  opt("fim_sync_max_eps"; 10),

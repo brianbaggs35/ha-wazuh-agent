@@ -206,6 +206,28 @@ configuration:
       age:
         name: Maximum file age
         description: Ignore files not modified within this time, for example 1d.
+      multiline_regex:
+        name: Event start pattern
+        description: >-
+          PCRE2 regular expression that groups lines into one event. Required when the format is
+          multi-line-regex (for example ^Traceback to read a Python traceback as one event), and
+          only used with it.
+      multiline_match:
+        name: Event grouping
+        description: >-
+          Where an event ends, for the multi-line-regex format. start (default): an event runs up to
+          the next line that matches the pattern; end: up to and including the line that matches;
+          all: until the whole event matches.
+      multiline_replace:
+        name: Line break replacement
+        description: >-
+          What the line breaks inside a multi-line event become: no-replace (default), wspace (a
+          space), tab or none.
+      multiline_timeout:
+        name: Event timeout
+        description: >-
+          Seconds to wait for the next line of a multi-line event, 1 to 120. Default 5. Must not exceed
+          the maximum file age.
   log_commands:
     name: Command output
     description: Commands whose output is collected as log events. They run inside this app's container.
@@ -293,6 +315,17 @@ configuration:
   fim_file_limit:
     name: Maximum monitored files
     description: Files beyond this number are not monitored.
+  fim_diff_disk_quota:
+    name: Stored changes size limit
+    description: >-
+      The most disk space the copies of changed files (kept to show what changed, for directories
+      with report changes on) may take, as a number followed by KB, MB or GB. Past it, alerts stop
+      showing the change until space is free. Default 1GB.
+  fim_diff_file_size:
+    name: Largest file to compare
+    description: >-
+      Files bigger than this do not show what changed when report changes is on, as a number followed
+      by KB, MB or GB. Default 50MB.
   fim_sync_enabled:
     name: Synchronize with the manager
     description: Keep the manager's file inventory in sync with the agent's.

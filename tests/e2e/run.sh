@@ -196,12 +196,14 @@ EOF'
     write_options "${vol}" "{\"manager_address\": \"${MANAGER}\", \"manager_failover_addresses\": [\"${MANAGER}\"],
         \"agent_name\": \"${name}\", \"agent_groups\": [\"e2e-group\"], \"auto_labels\": false,
         \"agent_labels\": [{\"key\": \"e2e_label\", \"value\": \"hello\"}],
-        \"log_files\": [{\"path\": \"/logs/e2e-labels.log\", \"format\": \"syslog\"}], ${FAST}}"
+        \"log_files\": [{\"path\": \"/logs/e2e-labels.log\", \"format\": \"syslog\"},
+            {\"path\": \"/logs/e2e-multiline.log\", \"format\": \"multi-line-regex\", \"multiline_regex\": \"^Traceback\",
+             \"multiline_replace\": \"wspace\"}], ${FAST}}"
     # The monitored file lives on its own volume so it exists before the agent starts.
     local logvol="e2e-config-logs-${E2E_ID}"
     track_volume "${logvol}"
     docker volume create "${logvol}" > /dev/null
-    docker run --rm -v "${logvol}:/l" --entrypoint bash "${IMAGE}" -c 'touch /l/e2e-labels.log'
+    docker run --rm -v "${logvol}:/l" --entrypoint bash "${IMAGE}" -c 'touch /l/e2e-labels.log /l/e2e-multiline.log'
     agent_start "${c}" "${vol}" -v "${extra}:/config:ro" -v "${logvol}:/logs"
 
     wait_for 150 "${AGENT_ACTIVE_MESSAGE}" manager_agent_active "${name}" || { fail "${AGENT_ACTIVE_MESSAGE}"; dump_agent "${c}"; return; }
@@ -228,6 +230,20 @@ EOF'
             && pass "the event carries the agent label from agent_labels" || fail "the event carries the agent label from agent_labels"
     else
         fail "a custom log file event reached the manager"
+    fi
+
+    # A multi-line-regex log file: the lines of one traceback arrive as one event, line breaks as spaces.
+    wait_for 60 "multi-line log file picked up" container_log_has "${c}" "Analyzing file: '/logs/e2e-multiline.log'" \
+        && pass "the multi-line-regex log file is being monitored" || fail "the multi-line-regex log file is being monitored"
+    docker run --rm -v "${logvol}:/l" --entrypoint bash "${IMAGE}" -c \
+        'printf "%s\n" "Traceback (most recent call last):" "  File e2e.py, line 1" "ValueError: e2e-multiline-probe" \
+            "Traceback (most recent call last):" "ValueError: e2e-multiline-next" >> /l/e2e-multiline.log'
+    if wait_for 90 "multi-line event" manager_has_archive "e2e-multiline-probe"; then
+        docker exec "${MANAGER}" bash -c "grep -F e2e-multiline-probe /var/ossec/logs/archives/archives.json | head -1" \
+            | grep -Eq 'most recent call last\): +File e2e.py, line 1 +ValueError: e2e-multiline-probe' \
+            && pass "the lines of one traceback arrived as a single event" || fail "the lines of one traceback arrived as a single event"
+    else
+        fail "the lines of one traceback arrived as a single event"
     fi
 }
 
