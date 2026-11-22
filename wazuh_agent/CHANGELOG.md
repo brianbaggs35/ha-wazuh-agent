@@ -19,6 +19,10 @@ Wazuh agent **4.14.10**.
 
 - Updated ha-wazuh-agent to version 1.0.9
 
+### Security
+
+- Upgrade the image's glibc (`libc6`, `libc-bin`) and nghttp2 (`libnghttp2-14`) libraries to the Debian security release, which closes the 27 open Trivy code scanning alerts (the glibc heap and stack overflow, DNS resolver and iconv denial-of-service findings, and the nghttp2 HTTP/1.1 upgrade request smuggling finding).
+
 ## [1.0.8] = 2026-11-21
 
 Wazuh agent **4.14.10**.
