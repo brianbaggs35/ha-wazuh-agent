@@ -1,0 +1,4 @@
+has: log_files[0].multiline_regex: required when the format is multi-line-regex
+has: log_files[1]: the multiline_* options only apply when the format is multi-line-regex
+has: log_files[2]: the multiline_* options only apply when the format is multi-line-regex
+has: log_files[3]: the multiline_* options only apply when the format is multi-line-regex

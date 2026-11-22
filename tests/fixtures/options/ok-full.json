@@ -58,6 +58,8 @@
   "fim_max_eps": 100,
   "fim_process_priority": 5,
   "fim_file_limit": 50000,
+  "fim_diff_disk_quota": "2GB",
+  "fim_diff_file_size": "10MB",
   "fim_sync_enabled": false,
   "fim_sync_interval": "10m",
   "fim_sync_max_eps": 20,

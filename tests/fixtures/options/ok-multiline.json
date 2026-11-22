@@ -1,0 +1,8 @@
+{
+  "manager_address": "wazuh.example.lan",
+  "log_files": [
+    {"path": "/share/app/traceback.log", "format": "multi-line-regex", "multiline_regex": "^Traceback", "multiline_match": "start", "multiline_replace": "wspace", "multiline_timeout": 10},
+    {"path": "/share/app/blocks.log", "format": "multi-line-regex", "multiline_regex": "^\\[\\d{4}-"},
+    {"path": "/share/app/plain.log"}
+  ]
+}

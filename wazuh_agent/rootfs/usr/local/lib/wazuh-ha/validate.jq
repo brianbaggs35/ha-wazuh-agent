@@ -74,6 +74,19 @@ $o[0] as $o
     | select(.value.path | blank)
     | "log_files[\(.key)].path: required"),
 
+  (opt("log_files"; []) | to_entries[]
+    | . as $e
+    | ($e.value.format // "syslog") as $format
+    | ($e.value.multiline_regex | blank | not) as $has_regex
+    | (if $format == "multi-line-regex" and ($has_regex | not) then
+         "log_files[\($e.key)].multiline_regex: required when the format is multi-line-regex"
+       else empty end),
+      (if $format != "multi-line-regex"
+          and ($has_regex or ($e.value.multiline_match != null) or ($e.value.multiline_replace != null)
+               or ($e.value.multiline_timeout != null)) then
+         "log_files[\($e.key)]: the multiline_* options only apply when the format is multi-line-regex"
+       else empty end)),
+
   (opt("log_commands"; []) | to_entries[]
     | select(.value.command | blank)
     | "log_commands[\(.key)].command: required"),
@@ -87,6 +100,12 @@ $o[0] as $o
 
   (if (opt("inventory_interval"; "1h") | test("^[0-9]+[smhdwM]$") | not) then
      "inventory_interval: a number followed by s, m, h, d, w or M (for example 1h)" else empty end),
+
+  (if (opt("fim_diff_disk_quota"; "1GB") | test("^[0-9]+(KB|MB|GB)$") | not) then
+     "fim_diff_disk_quota: a number followed by KB, MB or GB (for example 1GB)" else empty end),
+
+  (if (opt("fim_diff_file_size"; "50MB") | test("^[0-9]+(KB|MB|GB)$") | not) then
+     "fim_diff_file_size: a number followed by KB, MB or GB (for example 50MB)" else empty end),
 
   (if (opt("fim_sync_interval"; "5m") | test("^[0-9]+[smhd]$") | not) then
      "fim_sync_interval: a number followed by s, m, h or d (for example 5m)" else empty end)
