@@ -27,6 +27,11 @@ Wazuh agent **4.14.10**.
 ### Security
 
 - Upgrade the image's glibc (`libc6`, `libc-bin`) and nghttp2 (`libnghttp2-14`) libraries to the Debian security release, which closes the 27 open Trivy code scanning alerts (the glibc heap and stack overflow, DNS resolver and iconv denial-of-service findings, and the nghttp2 HTTP/1.1 upgrade request smuggling finding).
+- Upgrade the image's MIT Kerberos libraries (`libgssapi-krb5-2`, `libk5crypto3`, `libkrb5-3`, `libkrb5support0`) to the Debian security release 1.21.3-5+deb13u2, which closes the 56 HIGH findings Trivy reported in them (CVE-2026-107364, CVE-2026-112315 to CVE-2026-112323, CVE-2026-118380, CVE-2026-119079, CVE-2026-71199 and CVE-2026-71200: denial of service and information disclosure in the Kerberos KDC and kadmind code).
+
+### Changed
+
+- Continuous integration: Trivy updated to 0.76.2. The app image is otherwise unchanged.
 
 ## [1.0.8] = 2026-11-21
 
