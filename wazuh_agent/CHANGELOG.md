@@ -11,6 +11,14 @@ as a normal app update.
 Before updating the app, check that your Wazuh manager is not older than the agent
 it will receive (see "Updating" in the documentation).
 
+## [1.1.0] = 2026-11-23
+
+Wazuh agent **4.14.10**.
+
+### Updates
+
+- Updated ha-wazuh-agent to version 1.1.0
+
 ## [1.0.9] = 2026-11-22
 
 Wazuh agent **4.14.10**.

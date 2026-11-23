@@ -1,6 +1,6 @@
 ---
 name: Wazuh Agent
-version: "1.0.9"
+version: "1.1.0"
 slug: wazuh_agent
 image: ghcr.io/brianbaggs35/wazuh_agent
 description: >-
