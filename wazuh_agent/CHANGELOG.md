@@ -18,6 +18,10 @@ Wazuh agent **4.14.10**.
 ### Updates
 
 - Updated ha-wazuh-agent to version 1.1.0
+- Updated @types/node to 26.6.11
+- Updated @vitest/coverage-v8 to 5.1.2
+- Updated vitest to 5.1.2
+- Updated typescript-eslint to 8.74.0
 
 ## [1.0.9] = 2026-11-22
 
