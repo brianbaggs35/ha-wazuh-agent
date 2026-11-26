@@ -22,6 +22,11 @@ Wazuh agent **4.14.10**.
 - Updated @vitest/coverage-v8 to 5.1.2
 - Updated vitest to 5.1.2
 - Updated typescript-eslint to 8.74.0
+- Updated PyYAML to 6.0.4 in CI and release workflows
+- Updated coverage to 7.17.5 in ci.yaml
+- Updated hadolint to 2.15.1
+- Updated SonarQube Scan Action to 8.5.1
+- Updated Cosign installer to 4.1.4
 
 ## [1.0.9] = 2026-11-22
 
